@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kaggle-tabular-lab"
+version = "0.1.0"
+description = "Config-first, leak-safe tabular ML pipeline for Kaggle"
+authors = [{ name = "KTL", email = "noreply@example.com" }]
+requires-python = ">=3.9"
+dependencies = [
+  "typer>=0.9",
+  "pydantic>=2.5",
+  "PyYAML>=6.0",
+  "pandas>=2.0",
+  "numpy>=1.26",
+  "scikit-learn>=1.3",
+  "joblib>=1.3"
+]
+
+[project.optional-dependencies]
+extras = [
+  "optuna>=3.4",
+  "xgboost>=2.0",
+  "lightgbm>=4.3",
+  "catboost>=1.2"
+]
+
+[project.scripts]
+ktl = "ktl.cli:app"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

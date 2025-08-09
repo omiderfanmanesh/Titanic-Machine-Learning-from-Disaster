@@ -1,0 +1,17 @@
+competition_name: <NAME>
+target: <COLUMN>
+id_column: id
+task_type: regression  # or binary|multiclass
+metric_name: rmse      # or auc for binary
+cv:
+  scheme: kfold        # kfold|stratified|group|timeseries
+  n_splits: 5
+  shuffle: true
+  random_state: 42
+  group_column: null
+  time_column: null
+paths:
+  train_csv: data/train.csv
+  test_csv: data/test.csv
+kaggle:
+  competition: null

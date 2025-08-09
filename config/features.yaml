@@ -1,0 +1,5 @@
+features:
+  scale_numeric: true
+  encode_categorical: true
+  impute_numeric: median
+  impute_categorical: most_frequent
