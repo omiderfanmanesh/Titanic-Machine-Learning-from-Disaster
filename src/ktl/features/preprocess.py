@@ -173,7 +173,12 @@ class PreprocessorBuilder:
         cat_steps = []
         if cat_cols and cfg.encode_categorical:
             cat_steps.append(("imputer", SimpleImputer(strategy=cfg.impute_categorical)))
-            cat_steps.append(("ohe", OneHotEncoder(handle_unknown="ignore")))
+            # Dense output to support estimators that don't accept sparse input (e.g., HistGBC)
+            try:
+                ohe = OneHotEncoder(handle_unknown="ignore", sparse_output=False)  # sklearn >= 1.2
+            except TypeError:
+                ohe = OneHotEncoder(handle_unknown="ignore", sparse=False)  # older versions
+            cat_steps.append(("ohe", ohe))
 
         transformers = []
         if num_cols:

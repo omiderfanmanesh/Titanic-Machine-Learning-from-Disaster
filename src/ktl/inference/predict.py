@@ -120,3 +120,12 @@ class Predictor:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         sub.to_csv(out_path, index=False)
         log.info("Submission written: %s (rows=%d)", out_path, len(sub))
+
+    def proba_from_run(self, run_dir: Path, X: pd.DataFrame) -> np.ndarray:
+        """Load pipelines from run_dir and return averaged positive-class probas."""
+        pipe_paths = _load_pipelines_from_summary(run_dir)
+        pipelines = [joblib.load(p) for p in pipe_paths]
+        p = self._predict_proba_binary(pipelines, X)
+        if p is None:
+            raise InferenceError("No probability outputs available from pipelines for run: %s" % run_dir)
+        return p

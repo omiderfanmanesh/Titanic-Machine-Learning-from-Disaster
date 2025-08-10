@@ -6,8 +6,8 @@ features:
   add_family: true
   add_is_alone: true
   add_title: true
-  add_deck: true
-  add_ticket_group_size: true
+  add_deck: false
+  add_ticket_group_size: false
   log_fare: true
-  bin_age: true
+  bin_age: false
   rare_title_threshold: 10
