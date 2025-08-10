@@ -3,3 +3,11 @@ features:
   encode_categorical: true
   impute_numeric: median
   impute_categorical: most_frequent
+  add_family: true
+  add_is_alone: true
+  add_title: true
+  add_deck: true
+  add_ticket_group_size: true
+  log_fare: true
+  bin_age: true
+  rare_title_threshold: 10

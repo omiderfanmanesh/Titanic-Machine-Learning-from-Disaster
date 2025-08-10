@@ -1,10 +1,10 @@
-competition_name: <NAME>
-target: <COLUMN>
-id_column: id
-task_type: regression  # or binary|multiclass
-metric_name: rmse      # or auc for binary
+competition_name: Titanic
+target: Survived
+id_column: PassengerId
+task_type: binary  # or regression|multiclass
+metric_name: auc   # Kaggle scores accuracy; we track AUC locally
 cv:
-  scheme: kfold        # kfold|stratified|group|timeseries
+  scheme: stratified   # kfold|stratified|group|timeseries
   n_splits: 5
   shuffle: true
   random_state: 42
@@ -14,4 +14,4 @@ paths:
   train_csv: data/train.csv
   test_csv: data/test.csv
 kaggle:
-  competition: null
+  competition: titanic

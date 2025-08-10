@@ -7,3 +7,7 @@ class KTLException(Exception):
 
 class TrainingError(KTLException):
     """Raised for training-related errors with actionable hints."""
+
+
+class InferenceError(KTLException):
+    """Raised for inference-related errors with actionable hints."""
