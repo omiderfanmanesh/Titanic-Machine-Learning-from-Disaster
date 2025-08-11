@@ -11,6 +11,8 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from ktl.utils.missing_value_handler import RandomForestAgeImputer, KNNMissingValueImputer, IterativeMissingValueImputer
+import typer
 
 
 @dataclass
@@ -205,3 +207,92 @@ class PreprocessorBuilder:
 
         # Return the pipeline but keep signature
         return preproc, num_cols, cat_cols, dt_cols
+
+
+def get_imputer(strategy: str, columns: List[str] = None):
+    """
+    Returns an imputer object based on the strategy string.
+    """
+    if strategy == 'randomforest':
+        return RandomForestAgeImputer(features=columns)
+    elif strategy == 'knn':
+        return KNNMissingValueImputer(cols=columns)
+    elif strategy == 'iterative':
+        return IterativeMissingValueImputer(cols=columns)
+    else:
+        return SimpleImputer(strategy=strategy)
+
+
+app = typer.Typer()
+
+@app.command()
+def preprocess_cli(
+    input_path: str,
+    output_path: str,
+    target: str = None,
+    select_cols: str = None,
+    impute_strategy: str = 'median',
+    scale_numeric: bool = True,
+    encode_categorical: bool = True,
+    add_family: bool = False,
+    add_is_alone: bool = False,
+    add_title: bool = False,
+    add_deck: bool = False,
+    add_ticket_group_size: bool = False,
+    log_fare: bool = False,
+    bin_age: bool = False
+):
+    """
+    Generalized preprocessing CLI for Titanic dataset.
+    """
+    import pandas as pd
+    df = pd.read_csv(input_path)
+    if select_cols:
+        cols = [c.strip() for c in select_cols.split(',')]
+        df = df[cols]
+    cfg = FeaturesConfig(
+        scale_numeric=scale_numeric,
+        encode_categorical=encode_categorical,
+        impute_numeric=impute_strategy,
+        add_family=add_family,
+        add_is_alone=add_is_alone,
+        add_title=add_title,
+        add_deck=add_deck,
+        add_ticket_group_size=add_ticket_group_size,
+        log_fare=log_fare,
+        bin_age=bin_age,
+    )
+    feateng = _FeatureEngineer(
+        add_family=add_family,
+        add_is_alone=add_is_alone,
+        add_title=add_title,
+        add_deck=add_deck,
+        add_ticket_group_size=add_ticket_group_size,
+        log_fare=log_fare,
+        bin_age=bin_age,
+    )
+    df = feateng.fit_transform(df)
+    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    if 'Age' in num_cols and impute_strategy in ['randomforest', 'knn', 'iterative']:
+        imputer = get_imputer(impute_strategy, columns=['Pclass', 'Sex', 'SibSp', 'Parch', 'Fare'])
+        df = imputer.fit_transform(df)
+    elif num_cols:
+        imputer = get_imputer(impute_strategy)
+        df[num_cols] = imputer.fit_transform(df[num_cols])
+    if scale_numeric and num_cols:
+        scaler = StandardScaler()
+        df[num_cols] = scaler.fit_transform(df[num_cols])
+    cat_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
+    if encode_categorical and cat_cols:
+        try:
+            encoder = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
+        except TypeError:
+            encoder = OneHotEncoder(handle_unknown="ignore", sparse=False)
+        encoded = encoder.fit_transform(df[cat_cols])
+        encoded_df = pd.DataFrame(encoded, columns=encoder.get_feature_names_out(cat_cols), index=df.index)
+        df = pd.concat([df.drop(columns=cat_cols), encoded_df], axis=1)
+    df.to_csv(output_path, index=False)
+    print(f"Preprocessing complete. Saved to {output_path}.")
+
+if __name__ == "__main__":
+    app()

@@ -8,6 +8,7 @@ import typer
 from ktl.utils.logger import LoggerFactory
 from ktl.inference.predict import Predictor, InferenceError
 from ktl.models.train import Trainer
+from ktl.features.preprocess import preprocess_cli
 
 app = typer.Typer(help="Kaggle Tabular Lab CLI")
 log = LoggerFactory.get_logger("ktl.cli")
@@ -24,14 +25,19 @@ def eda(
     train_csv: Path = typer.Option(..., exists=True, readable=True, help="Training CSV path"),
     out_dir: Path = typer.Option(Path("artifacts"), help="Output directory for EDA report"),
 ) -> None:
-    """Produce a quick EDA CSV summary (no heavy deps)."""
+    """Produce a quick EDA CSV summary and a full HTML profiling report."""
     import pandas as pd
+    from ydata_profiling import ProfileReport
     out_dir.mkdir(parents=True, exist_ok=True)
     summary_path = out_dir / "eda_summary.csv"
+    report_path = out_dir / "eda_full_report.html"
     df = pd.read_csv(train_csv)
     desc = df.describe(include="all").transpose()
     desc.to_csv(summary_path)
+    profile = ProfileReport(df, title="Full EDA Report", explorative=True)
+    profile.to_file(report_path)
     log.info("EDA summary written: %s", summary_path)
+    log.info("Full EDA HTML report written: %s", report_path)
 
 
 @app.command()
@@ -654,6 +660,33 @@ def report_markdown(
     output_md.parent.mkdir(parents=True, exist_ok=True)
     output_md.write_text("\n".join(md))
     log.info("Wrote Markdown summary: %s", output_md)
+
+
+@app.command()
+def preprocessing(
+    input_path: Path = typer.Option(..., exists=True, readable=True, help="Input CSV data file"),
+    output_path: Path = typer.Option(..., help="Output CSV data file"),
+    target: Optional[str] = typer.Option(None, help="Target column name"),
+    select_cols: Optional[str] = typer.Option(None, help="Comma-separated list of columns to keep"),
+    impute_strategy: str = typer.Option('median', help="Imputation strategy: median, mean, most_frequent, randomforest, knn, iterative"),
+    scale_numeric: bool = typer.Option(True, help="Whether to scale numeric features"),
+    encode_categorical: bool = typer.Option(True, help="Whether to one-hot encode categoricals"),
+    add_family: bool = typer.Option(False, help="Add FamilySize feature"),
+    add_is_alone: bool = typer.Option(False, help="Add IsAlone feature"),
+    add_title: bool = typer.Option(False, help="Add Title feature"),
+    add_deck: bool = typer.Option(False, help="Add Deck feature"),
+    add_ticket_group_size: bool = typer.Option(False, help="Add TicketGroupSize feature"),
+    log_fare: bool = typer.Option(False, help="Add LogFare feature"),
+    bin_age: bool = typer.Option(False, help="Add AgeBin feature")
+) -> None:
+    """
+    Generalized preprocessing CLI for Titanic dataset.
+    """
+    preprocess_cli(
+        str(input_path), str(output_path), target, select_cols, impute_strategy,
+        scale_numeric, encode_categorical, add_family, add_is_alone,
+        add_title, add_deck, add_ticket_group_size, log_fare, bin_age
+    )
 
 
 if __name__ == "__main__":
