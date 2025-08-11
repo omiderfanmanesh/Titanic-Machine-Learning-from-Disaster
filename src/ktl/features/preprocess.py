@@ -231,7 +231,7 @@ import typer
 app = typer.Typer()
 
 @app.command()
-def preprocess_cli(
+def preprocess(
     input_path: str,
     output_path: str,
     target: str = None,
@@ -247,13 +247,22 @@ def preprocess_cli(
     add_deck: bool = False,
     add_ticket_group_size: bool = False,
     log_fare: bool = False,
-    bin_age: bool = False
+    bin_age: bool = False,
+    scale_map: str = None,  # NEW: per-column scaling
+    drop_cols: str = None   # NEW: columns to drop after feateng
 ):
     """
-    Generalized preprocessing CLI for Titanic dataset with per-column imputation strategies.
+    Generalized preprocessing CLI for Titanic dataset with per-column imputation and scaling strategies.
     """
     import pandas as pd
+    from sklearn.preprocessing import MinMaxScaler
     df = pd.read_csv(input_path)
+    # Separate target column first
+    target_col = target if target and target in df.columns else None
+    target_series = None
+    if target_col:
+        target_series = df[target_col].copy()
+        df = df.drop(columns=[target_col])
     if select_cols:
         cols = [c.strip() for c in select_cols.split(',')]
         df = df[cols]
@@ -279,10 +288,16 @@ def preprocess_cli(
         bin_age=bin_age,
     )
     df = feateng.fit_transform(df)
+    # Drop unnecessary columns after feature engineering
+    if drop_cols:
+        drop_list = [c.strip() for c in drop_cols.split(',')]
+        df = df.drop(columns=[c for c in drop_list if c in df.columns])
+    # Remove target column from numeric/categorical columns before any transformation
     num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    cat_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
+    # Imputation
     impute_map_dict = parse_impute_map(impute_map)
     impute_features_dict = parse_impute_features(impute_features)
-    # Per-column imputation
     for col in df.columns:
         if df[col].isna().any():
             strat = impute_map_dict.get(col, impute_strategy)
@@ -302,11 +317,24 @@ def preprocess_cli(
             else:
                 imputer = SimpleImputer(strategy=strat)
                 df[[col]] = imputer.fit_transform(df[[col]])
-    # Scaling
-    if scale_numeric and num_cols:
-        scaler = StandardScaler()
-        df[num_cols] = scaler.fit_transform(df[num_cols])
-    cat_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
+    # Scaling (per-column)
+    scale_map_dict = {}
+    if scale_map:
+        for pair in scale_map.split(','):
+            if ':' in pair:
+                col, scaler_type = pair.split(':', 1)
+                scale_map_dict[col.strip()] = scaler_type.strip()
+    if num_cols:
+        for col in num_cols:
+            scaler_type = scale_map_dict.get(col, 'standard' if scale_numeric else None)
+            if scaler_type == 'minmax':
+                scaler = MinMaxScaler()
+                df[[col]] = scaler.fit_transform(df[[col]])
+            elif scaler_type == 'standard' and scale_numeric:
+                scaler = StandardScaler(with_mean=True)
+                df[[col]] = scaler.fit_transform(df[[col]])
+            # else: no scaling
+    # Encoding
     if encode_categorical and cat_cols:
         try:
             encoder = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
@@ -315,8 +343,8 @@ def preprocess_cli(
         encoded = encoder.fit_transform(df[cat_cols])
         encoded_df = pd.DataFrame(encoded, columns=encoder.get_feature_names_out(cat_cols), index=df.index)
         df = pd.concat([df.drop(columns=cat_cols), encoded_df], axis=1)
+    # Add target column back as integer (if present in input)
+    if target_series is not None:
+        df[target_col] = target_series.round().astype(int)
     df.to_csv(output_path, index=False)
     print(f"Preprocessing complete. Saved to {output_path}.")
-
-if __name__ == "__main__":
-    app()

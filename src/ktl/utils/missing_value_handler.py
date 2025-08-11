@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import KNNImputer, IterativeImputer, SimpleImputer
 from sklearn.ensemble import RandomForestRegressor
 
@@ -19,8 +20,8 @@ class KNNMissingValueImputer(BaseEstimator, TransformerMixin):
         X_new[self.cols] = self.imputer.transform(X_new[self.cols])
         return X_new
 
-    def fit_transform(self, X, y=None):
-        self.fit(X, y)
+    def fit_transform(self, X, y=None, **fit_params):
+        self.fit(X, y, **fit_params)
         return self.transform(X)
 
 class IterativeMissingValueImputer(BaseEstimator, TransformerMixin):

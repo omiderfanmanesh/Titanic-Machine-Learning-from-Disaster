@@ -8,7 +8,7 @@ import typer
 from ktl.utils.logger import LoggerFactory
 from ktl.inference.predict import Predictor, InferenceError
 from ktl.models.train import Trainer
-from ktl.features.preprocess import preprocess_cli
+from ktl.features.preprocess import preprocess
 
 app = typer.Typer(help="Kaggle Tabular Lab CLI")
 log = LoggerFactory.get_logger("ktl.cli")
@@ -668,6 +668,8 @@ def preprocessing(
     output_path: Path = typer.Option(..., help="Output CSV data file"),
     target: Optional[str] = typer.Option(None, help="Target column name"),
     select_cols: Optional[str] = typer.Option(None, help="Comma-separated list of columns to keep"),
+    impute_map: str = typer.Option(None, help="Path to YAML file for custom imputation mapping"),
+    impute_features: str = typer.Option(None, help="Comma-separated list of features for imputation"),
     impute_strategy: str = typer.Option('median', help="Imputation strategy: median, mean, most_frequent, randomforest, knn, iterative"),
     scale_numeric: bool = typer.Option(True, help="Whether to scale numeric features"),
     encode_categorical: bool = typer.Option(True, help="Whether to one-hot encode categoricals"),
@@ -677,15 +679,17 @@ def preprocessing(
     add_deck: bool = typer.Option(False, help="Add Deck feature"),
     add_ticket_group_size: bool = typer.Option(False, help="Add TicketGroupSize feature"),
     log_fare: bool = typer.Option(False, help="Add LogFare feature"),
-    bin_age: bool = typer.Option(False, help="Add AgeBin feature")
+    bin_age: bool = typer.Option(False, help="Add AgeBin feature"),
+    drop_cols: str = typer.Option(None, help="Comma-separated list of columns to drop after feature engineering"),
 ) -> None:
     """
     Generalized preprocessing CLI for Titanic dataset.
     """
-    preprocess_cli(
-        str(input_path), str(output_path), target, select_cols, impute_strategy,
+    preprocess(
+        str(input_path), str(output_path), target, select_cols, impute_map, impute_features, impute_strategy,
         scale_numeric, encode_categorical, add_family, add_is_alone,
-        add_title, add_deck, add_ticket_group_size, log_fare, bin_age
+        add_title, add_deck, add_ticket_group_size, log_fare, bin_age,
+        None, drop_cols
     )
 
 
