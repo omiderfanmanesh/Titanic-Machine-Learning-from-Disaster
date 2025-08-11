@@ -40,7 +40,9 @@ def train(
     config_dir: Path = typer.Option(Path("config"), help="Directory with YAML configs"),
 ) -> None:
     """Run cross-validation training and save artifacts."""
-    Trainer(config_dir=config_dir).run(train_csv)
+    run_dir = Trainer(config_dir=config_dir).run(train_csv)
+    print("\nTraining complete. See above for model selection report.")
+    print(f"Artifacts saved in: {run_dir}")
 
 
 @app.command()

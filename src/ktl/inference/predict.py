@@ -129,3 +129,27 @@ class Predictor:
         if p is None:
             raise InferenceError("No probability outputs available from pipelines for run: %s" % run_dir)
         return p
+
+def make_kaggle_submission(test_csv: Path, output_csv: Path = Path("submission.csv")):
+    """Generate Kaggle submission using the best model from latest run."""
+    run_dir = _find_latest_run_dir()
+    # Find best model file
+    model_files = list(run_dir.glob("model_*.joblib"))
+    if not model_files:
+        raise InferenceError(f"No model artifacts found in {run_dir}.")
+    best_model_path = model_files[0]  # Only one best model is saved
+    pipe = joblib.load(best_model_path)
+    df_test = pd.read_csv(test_csv)
+    passenger_ids = df_test["PassengerId"]
+    X_test = df_test.drop(columns=["PassengerId"])
+    # Predict
+    try:
+        preds = pipe.predict(X_test)
+    except Exception:
+        # For classifiers, predict_proba may be needed
+        proba = pipe.predict_proba(X_test)
+        preds = (proba[:, 1] > 0.5).astype(int)
+    # Prepare submission
+    submission = pd.DataFrame({"PassengerId": passenger_ids, "Survived": preds})
+    submission.to_csv(output_csv, index=False)
+    log.info(f"Kaggle submission saved to {output_csv}")

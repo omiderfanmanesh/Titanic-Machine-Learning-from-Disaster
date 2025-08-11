@@ -17,7 +17,11 @@ from ktl.models.metrics import Metric, TaskType, get_metric
 from ktl.models.model_zoo import ModelFactory
 from ktl.utils.logger import LoggerFactory
 from ktl.utils.paths import create_run_dir
-from ktl.utils.validation import CVConfig, SplitterFactory
+from ktl.utils.validation import CVConfig
+
+import warnings
+
+warnings.filterwarnings("ignore")
 
 log = LoggerFactory.get_logger("ktl.models.train")
 
@@ -98,48 +102,93 @@ class Trainer:
         fold_scores: List[float] = []
         fold_paths: List[Path] = []
 
-        for fold, (tr_idx, va_idx) in enumerate(splitter.split(X, y)):
-            X_tr, X_va = X.iloc[tr_idx], X.iloc[va_idx]
-            y_tr, y_va = y[tr_idx], y[va_idx]
-
-            model = pipe
-            model.fit(X_tr, y_tr)
-
-            if task == "binary":
-                # probability for positive class if available
-                try:
-                    proba = model.predict_proba(X_va)
-                    preds = proba[:, 1] if proba.ndim == 2 else proba
-                except Exception:
+        # Train all models and select the best
+        best_score = None
+        best_model = None
+        best_model_name = None
+        best_model_params = None
+        best_pipe = None
+        best_oof = None
+        best_fold_scores = None
+        for entry in model_entries:
+            model_name = entry.get("name", "ridge")
+            model_params = entry.get("params", {})
+            est = ModelFactory.make(model_name, task, model_params)
+            pipe = Pipeline([("preprocess", ct), ("model", est)])
+            oof = np.zeros(len(df), dtype=float)
+            fold_scores: List[float] = []
+            for fold, (tr_idx, va_idx) in enumerate(splitter.split(X, y)):
+                X_tr, X_va = X.iloc[tr_idx], X.iloc[va_idx]
+                y_tr, y_va = y[tr_idx], y[va_idx]
+                model = pipe
+                model.fit(X_tr, y_tr)
+                if task == "binary":
+                    try:
+                        proba = model.predict_proba(X_va)
+                        preds = proba[:, 1] if proba.ndim == 2 else proba
+                    except Exception:
+                        preds = model.predict(X_va)
+                else:
                     preds = model.predict(X_va)
-            else:
-                preds = model.predict(X_va)
+                score = metric(y_va, preds)
+                fold_scores.append(score)
+                oof[va_idx] = preds
+            avg_score = np.mean(fold_scores)
+            log.info(f"Model {model_name} CV score: {avg_score:.5f}")
+            if (best_score is None) or (avg_score > best_score):
+                best_score = avg_score
+                best_model = est
+                best_model_name = model_name
+                best_model_params = model_params
+                best_pipe = pipe
+                best_oof = oof.copy()
+                best_fold_scores = fold_scores.copy()
+        log.info(f"Best model: {best_model_name} with CV score: {best_score:.5f}")
+        # Save best model and OOF predictions
+        joblib.dump(best_pipe, run_dir / f"model_{best_model_name}.joblib")
+        np.save(run_dir / f"oof_{best_model_name}.npy", best_oof)
+        with (run_dir / f"cv_scores_{best_model_name}.json").open("w") as f:
+            json.dump(best_fold_scores, f)
 
-            score = metric(y_va, preds)
-            fold_scores.append(score)
-            oof[va_idx] = preds
+        # Generate a markdown report for this run
+        report_path = run_dir / "report.md"
+        with report_path.open("w") as f:
+            f.write("# Model Training Report\n\n")
+            f.write(f"**Run Directory:** {run_dir}\n\n")
+            f.write("## Best Model\n")
+            f.write(f"- Name: `{best_model_name}`\n")
+            f.write(f"- Parameters: `{best_model_params}`\n\n")
+            f.write("## Cross-Validation Scores\n")
+            f.write(f"- Fold scores: {[round(s, 5) for s in best_fold_scores]}\n")
+            f.write(f"- Mean CV score: {round(best_score, 5)}\n\n")
+            # Features used
+            f.write("## Features Used\n")
+            import yaml
+            feats_cfg = yaml.safe_load((self.config_dir / "features.yaml").read_text())
+            for k, v in feats_cfg.get("features", feats_cfg).items():
+                f.write(f"- {k}: {v}\n")
+            f.write("\n")
+            # Config snapshot
+            f.write("## Config Snapshot\n")
+            base_cfg = yaml.safe_load((self.config_dir / "base.yaml").read_text())
+            models_cfg = yaml.safe_load((self.config_dir / "models.yaml").read_text())
+            f.write("### base.yaml\n```")
+            yaml.dump(base_cfg, f)
+            f.write("```\n\n")
+            f.write("### features.yaml\n```")
+            yaml.dump(feats_cfg, f)
+            f.write("```\n\n")
+            f.write("### models.yaml\n```")
+            yaml.dump(models_cfg, f)
+            f.write("```\n")
+        print(f"Report saved to: {report_path}")
 
-            fold_path = run_dir / f"pipeline_fold{fold}.joblib"
-            joblib.dump(model, fold_path)
-            fold_paths.append(fold_path)
-            log.info("Fold %d score=%.6f saved=%s", fold, score, fold_path.name)
+        # Print summary to terminal
+        print("\n=== Model Selection Report ===")
+        print(f"Best model: {best_model_name}")
+        print(f"CV scores: {[round(s, 5) for s in best_fold_scores]}")
+        print(f"Mean CV score: {round(best_score, 5)}")
+        print(f"Model params: {best_model_params}")
+        print(f"Artifacts saved in: {run_dir}")
 
-        # Save OOF predictions
-        oof_df = pd.DataFrame({"oof": oof})
-        if id_column and id_column in df.columns:
-            oof_df.insert(0, id_column, df[id_column].values)
-        oof_path = run_dir / "oof.csv"
-        oof_df.to_csv(oof_path, index=False)
-
-        summary = {
-            "model": model_name,
-            "metric": metric.name,
-            "direction": str(metric.direction.value),
-            "fold_scores": fold_scores,
-            "score_mean": float(np.mean(fold_scores)),
-            "score_std": float(np.std(fold_scores)),
-            "pipelines": [str(p) for p in fold_paths],
-        }
-        (run_dir / "cv_summary.json").write_text(json.dumps(summary, indent=2))
-        log.info("Saved OOF and summary to %s", run_dir)
         return run_dir

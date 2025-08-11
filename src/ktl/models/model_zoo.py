@@ -57,6 +57,7 @@ class ModelFactory:
                     eval_metric="logloss",
                     n_jobs=-1,
                     use_label_encoder=False,
+                    verbosity=0,  # Suppress warnings
                 )
                 return XGBClassifier(**{**default, **params})
             if key == "catboost":
