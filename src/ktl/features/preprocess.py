@@ -11,8 +11,6 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from ktl.utils.missing_value_handler import RandomForestAgeImputer, KNNMissingValueImputer, IterativeMissingValueImputer
-import typer
 
 
 @dataclass
@@ -84,7 +82,7 @@ class _FeatureEngineer(BaseEstimator, TransformerMixin):
 
         if self.add_title and 'Name' in X.columns:
             def extract_title(name: str) -> str:
-                m = re.search(r',\s*([^\.]+)\.', str(name))
+                m = re.search(r',\s*([^.]+)\.', str(name))
                 return m.group(1).strip() if m else 'Unknown'
             titles = X['Name'].map(extract_title)
             # normalize common variants
@@ -109,7 +107,7 @@ class _FeatureEngineer(BaseEstimator, TransformerMixin):
                 df['IsAlone'] = (tmp == 1).astype(int)
         if self.add_title and 'Name' in df.columns:
             def extract_title(name: str) -> str:
-                m = re.search(r',\s*([^\.]+)\.', str(name))
+                m = re.search(r',\s*([^.]+)\.', str(name))
                 return m.group(1).strip() if m else 'Unknown'
             titles = df['Name'].map(extract_title).replace({'Mlle': 'Miss', 'Ms': 'Miss', 'Mme': 'Mrs'})
             if self.title_replace_map_:
@@ -209,20 +207,27 @@ class PreprocessorBuilder:
         return preproc, num_cols, cat_cols, dt_cols
 
 
-def get_imputer(strategy: str, columns: List[str] = None):
-    """
-    Returns an imputer object based on the strategy string.
-    """
-    if strategy == 'randomforest':
-        return RandomForestAgeImputer(features=columns)
-    elif strategy == 'knn':
-        return KNNMissingValueImputer(cols=columns)
-    elif strategy == 'iterative':
-        return IterativeMissingValueImputer(cols=columns)
-    else:
-        return SimpleImputer(strategy=strategy)
+def parse_impute_map(impute_map: str) -> Dict[str, str]:
+    """Parse impute map string like 'Age:randomforest,Fare:knn' into a dict."""
+    result = {}
+    if impute_map:
+        for pair in impute_map.split(','):
+            if ':' in pair:
+                col, strat = pair.split(':', 1)
+                result[col.strip()] = strat.strip()
+    return result
 
+def parse_impute_features(impute_features: str) -> Dict[str, List[str]]:
+    """Parse impute features string like 'Age:Pclass,Sex;Fare:Pclass,Sex' into a dict."""
+    result = {}
+    if impute_features:
+        for pair in impute_features.split(';'):
+            if ':' in pair:
+                col, feats = pair.split(':', 1)
+                result[col.strip()] = [f.strip() for f in feats.split(',')]
+    return result
 
+import typer
 app = typer.Typer()
 
 @app.command()
@@ -231,6 +236,8 @@ def preprocess_cli(
     output_path: str,
     target: str = None,
     select_cols: str = None,
+    impute_map: str = None,
+    impute_features: str = None,
     impute_strategy: str = 'median',
     scale_numeric: bool = True,
     encode_categorical: bool = True,
@@ -243,7 +250,7 @@ def preprocess_cli(
     bin_age: bool = False
 ):
     """
-    Generalized preprocessing CLI for Titanic dataset.
+    Generalized preprocessing CLI for Titanic dataset with per-column imputation strategies.
     """
     import pandas as pd
     df = pd.read_csv(input_path)
@@ -273,12 +280,29 @@ def preprocess_cli(
     )
     df = feateng.fit_transform(df)
     num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    if 'Age' in num_cols and impute_strategy in ['randomforest', 'knn', 'iterative']:
-        imputer = get_imputer(impute_strategy, columns=['Pclass', 'Sex', 'SibSp', 'Parch', 'Fare'])
-        df = imputer.fit_transform(df)
-    elif num_cols:
-        imputer = get_imputer(impute_strategy)
-        df[num_cols] = imputer.fit_transform(df[num_cols])
+    impute_map_dict = parse_impute_map(impute_map)
+    impute_features_dict = parse_impute_features(impute_features)
+    # Per-column imputation
+    for col in df.columns:
+        if df[col].isna().any():
+            strat = impute_map_dict.get(col, impute_strategy)
+            feats = impute_features_dict.get(col, None)
+            if strat == 'randomforest' and feats:
+                from ktl.utils.missing_value_handler import RandomForestAgeImputer
+                imputer = RandomForestAgeImputer(features=feats, age_col=col)
+                df = imputer.fit_transform(df)
+            elif strat == 'knn':
+                from ktl.utils.missing_value_handler import KNNMissingValueImputer
+                imputer = KNNMissingValueImputer(cols=[col])
+                df = imputer.fit_transform(df)
+            elif strat == 'iterative':
+                from ktl.utils.missing_value_handler import IterativeMissingValueImputer
+                imputer = IterativeMissingValueImputer(cols=[col])
+                df = imputer.fit_transform(df)
+            else:
+                imputer = SimpleImputer(strategy=strat)
+                df[[col]] = imputer.fit_transform(df[[col]])
+    # Scaling
     if scale_numeric and num_cols:
         scaler = StandardScaler()
         df[num_cols] = scaler.fit_transform(df[num_cols])
