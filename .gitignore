@@ -29,8 +29,7 @@ env/
 coverage.xml
 
 # Project
-artifacts/
-data/
+
 *.ipynb_checkpoints
 .DS_Store
 *.egg-info/

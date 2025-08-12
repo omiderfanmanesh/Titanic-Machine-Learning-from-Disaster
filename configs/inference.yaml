@@ -1,0 +1,18 @@
+# Inference configuration
+ensemble_method: average
+ensemble_weights: null
+
+# Test-time augmentation
+use_tta: false
+tta_rounds: 5
+tta_noise_scale: 0.01
+
+# Output configuration
+output_path: artifacts/predictions.csv
+submission_path: artifacts/submission.csv
+
+# Post-processing
+threshold: 0.5
+postprocessing:
+  rules:
+    - type: round_predictions

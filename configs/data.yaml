@@ -1,0 +1,39 @@
+# Data configuration for Titanic competition
+train_path: data/raw/train.csv
+test_path: data/raw/test.csv
+target_column: Survived
+id_column: PassengerId
+
+# Task configuration
+task_type: binary
+
+# Schema definition
+required_columns:
+  - PassengerId
+  - Survived
+  - Pclass
+  - Name
+  - Sex
+  - Age
+  - SibSp
+  - Parch
+  - Ticket
+  - Fare
+  - Cabin
+  - Embarked
+
+numeric_columns:
+  - Age
+  - SibSp
+  - Parch
+  - Fare
+
+categorical_columns:
+  - Sex
+  - Embarked
+  - Pclass
+
+# Preprocessing options
+handle_missing: true
+scale_features: true
+encode_categoricals: true
