@@ -616,82 +616,100 @@ def autopipeline(experiment_config: str, data_config: str, inference_config: str
 
 @cli.command()
 @click.option("--predictions-path", type=click.Path(exists=True), required=True,
-              help="Path to predictions CSV (probabilities or predictions)")
+              help="Path to predictions CSV (from the predict step)")
 @click.option("--output-path", type=click.Path(), help="Output path for submission CSV")
-@click.option("--threshold", type=float, default=0.5, help="Classification threshold when converting probabilities to classes")
+@click.option("--threshold", type=float, default=None,
+              help="Only used if predictions.csv does NOT have a binary 'prediction' column")
 @click.option("--competition", default="titanic", show_default=True, help="Kaggle competition slug")
 @click.option("--remote", is_flag=True, help="If set, submit to Kaggle after building the local submission file")
-@click.option("--descriptive/--no-descriptive", default=True, show_default=True, help="Use descriptive filename with model+scores+timestamp (short form)")
+@click.option("--descriptive/--no-descriptive", default=True, show_default=True,
+              help="Use descriptive filename with model+scores+timestamp (short form)")
 @click.option("--message", "-m", default="Automated submission", show_default=True, help="Kaggle submission message")
-def submit(predictions_path: str, output_path: Optional[str], threshold: float, competition: str, remote: bool, descriptive: bool, message: str):
-    """Build (and optionally remotely submit) a Kaggle submission file.
-
-    Typical usage:
-      titanic submit --predictions-path artifacts/2025.../predictions.csv --remote -m "First solid CV run"
-    """
-
+def submit(predictions_path: str, output_path: Optional[str], threshold: Optional[float],
+           competition: str, remote: bool, descriptive: bool, message: str):
+    """Build (and optionally remotely submit) a Kaggle submission file from predictions.csv."""
     try:
-        # Load predictions
-        predictions_df = pd.read_csv(predictions_path)
-        # Load inference config for threshold optimizer
-        import yaml
-        config_path = Path(predictions_path).parent / "../configs/inference.yaml"
-        if config_path.exists():
-            with open(config_path, "r") as f:
-                inference_config_dict = yaml.safe_load(f)
+        import json
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        import pandas as pd
+
+        pred_path = Path(predictions_path)
+        run_dir = pred_path.parent
+
+        # 1) Load predictions
+        df = pd.read_csv(predictions_path)
+
+        # 2) Decide labels without re-deriving thresholds
+        used_src = "predictions.csv"
+        if "prediction" in df.columns and set(pd.unique(df["prediction"])) <= {0, 1}:
+            y = df["prediction"].astype(int)
+        elif "prediction_proba" in df.columns:
+            # Only threshold if we must (no binary column present)
+            thr = None
+            if threshold is not None:
+                thr = float(threshold)
+                used_src = "cli:threshold"
+            else:
+                # Best effort: try the run artifact (but ONLY because we must convert proba)
+                best_thr_file = run_dir / "best_threshold.txt"
+                if best_thr_file.exists():
+                    try:
+                        thr = float(best_thr_file.read_text().strip())
+                        used_src = "artifact:best_threshold.txt"
+                    except Exception:
+                        thr = None
+                if thr is None:
+                    # fall back to 0.5 if nothing else
+                    thr = 0.5
+                    used_src = "default:0.5"
+
+            y = (df["prediction_proba"].astype(float) >= thr).astype(int)
         else:
-            inference_config_dict = {}
-        threshold = inference_config_dict.get("threshold", threshold)
-        opt_cfg = inference_config_dict.get("threshold_optimizer", {})
-        if opt_cfg.get("enabled", False):
-            from eval.utils import ThresholdOptimizer
-            y_true = predictions_df["target"] if "target" in predictions_df.columns else None
-            y_proba = predictions_df["prediction_proba"] if "prediction_proba" in predictions_df.columns else predictions_df["prediction"]
-            if y_true is not None:
-                optimizer = ThresholdOptimizer(y_true, y_proba)
-                method = opt_cfg.get("method", "f1")
-                if method == "f1":
-                    threshold, _ = optimizer.best_f1()
-                elif method == "accuracy":
-                    threshold, _ = optimizer.best_accuracy()
-                elif method == "youdenj":
-                    threshold, _ = optimizer.best_youdenj()
-                elif method == "cost":
-                    threshold, _ = optimizer.best_cost()
-            predictions_df["prediction"] = (y_proba >= threshold).astype(int)
+            raise ValueError(
+                "Predictions file must contain either a binary 'prediction' column "
+                "or a 'prediction_proba' column."
+            )
 
-        # Create submission builder
-        builder = TitanicSubmissionBuilder()
-        config = {"threshold": threshold, "add_metadata": not remote}
-        submission = builder.build_submission(predictions_df, config)
+        # 3) Build submission (PassengerId + Survived)
+        if "PassengerId" in df.columns:
+            pid = df["PassengerId"].astype(int)
+        elif df.index.name == "PassengerId":
+            pid = df.index.to_series().astype(int)
+        else:
+            raise ValueError("Could not find PassengerId column or index in predictions.")
 
-        # Validate submission
-        if not builder.validate_submission(submission):
-            click.echo("❌ Submission validation failed")
+        submission = pd.DataFrame({"PassengerId": pid, "Survived": y.astype(int)})
+
+        # 4) Validate (basic checks)
+        if submission.isna().any().any():
+            click.echo("❌ Submission has NaNs.")
+            return
+        if submission["PassengerId"].duplicated().any():
+            click.echo("❌ Duplicate PassengerId in submission.")
             return
 
-        # Determine save path (apply compact descriptive naming if requested)
+        # 5) Decide save path
         if output_path:
             sub_path = Path(output_path)
         else:
-            pred_path_obj = Path(predictions_path)
-            run_dir = pred_path_obj.parent
             if descriptive:
+                # Compact descriptive name using available artifacts (best-effort)
                 model_name = "unknown"
                 mean_score = None
                 oof_score = None
                 try:
                     tc_path = run_dir / "training_config.json"
                     if tc_path.exists():
-                        import json as _json
                         with open(tc_path, "r") as f:
-                            tc_data = _json.load(f)
+                            tc_data = json.load(f)
                             model_name = tc_data.get("model_name", model_name)
                     scores_path = run_dir / "cv_scores.json"
                     if scores_path.exists():
-                        import json as _json
                         with open(scores_path, "r") as f:
-                            scores_data = _json.load(f)
+                            scores_data = json.load(f)
                             mean_score = scores_data.get("mean_score")
                             oof_score = scores_data.get("oof_score")
                 except Exception:
@@ -699,23 +717,26 @@ def submit(predictions_path: str, output_path: Optional[str], threshold: float, 
 
                 def _fmt(val, digits):
                     try:
-                        return f"{val:.{digits}f}".replace('.', '')
+                        return f"{val:.{digits}f}".replace(".", "")
                     except Exception:
                         return "na"
 
-                safe_model = str(model_name).replace(' ', '-').replace('/', '-')
-                parts = ["sub", safe_model]
+                parts = ["sub", str(model_name).replace(" ", "-").replace("/", "-")]
                 if mean_score is not None:
                     parts.append(f"cv{_fmt(mean_score,4)}")
                 if oof_score is not None:
                     parts.append(f"oof{_fmt(oof_score,4)}")
-                parts.append(f"thr{_fmt(threshold,2)}")
-                # Use run directory name (timestamp) for traceability
+
+                # If we used a threshold source during this call (only when proba->binary), annotate it
+                if used_src != "predictions.csv":
+                    # include short form of source and value if we have it
+                    parts.append(f"thrsrc-{used_src.split(':',1)[0]}")
+
                 parts.append(run_dir.name)
                 filename = "_".join(parts) + ".csv"
                 sub_path = run_dir / filename
 
-                # Remove legacy generic submission.csv if present
+                # Remove legacy generic if present
                 generic = run_dir / "submission.csv"
                 if generic.exists():
                     try:
@@ -725,35 +746,27 @@ def submit(predictions_path: str, output_path: Optional[str], threshold: float, 
             else:
                 sub_path = run_dir / "submission.csv"
 
-        # Enrich config metadata for potential local metadata writing
-        if not remote:
-            # Provide model_name / cv_score for metadata if available
-            try:
-                if 'model_name' not in config:
-                    # Already loaded earlier? ensure existence
-                    pass
-            except Exception:
-                pass
+        # 6) Save submission
+        submission.to_csv(sub_path, index=False)
 
-        builder.save_submission(submission, sub_path, config)
-
-        # Summary statistics
-        positive_rate = submission["Survived"].mean()
+        # 7) Summary
         click.echo(f"✅ Submission created: {sub_path}")
         click.echo(f"   📊 Samples: {len(submission)}")
-        click.echo(f"   📊 Positive rate: {positive_rate:.3f}")
-        click.echo(f"   📊 Threshold used: {threshold}")
+        click.echo(f"   📊 Positive rate: {submission['Survived'].mean():.3f}")
+        if used_src != "predictions.csv":
+            click.echo(f"   📊 Labels derived from proba using: {used_src}")
+        else:
+            click.echo(f"   ✅ Using binary predictions already present in predictions.csv")
 
+        # 8) Optional remote submit
         if remote:
             click.echo("🌐 Remote submission requested -- preparing Kaggle submission...")
-
             kaggle_cli = shutil.which("kaggle")
             if kaggle_cli is None:
                 click.echo("❌ Kaggle CLI not found. Install with: pip install kaggle")
                 click.echo("   Then place your API token at ~/.kaggle/kaggle.json (chmod 600). Skipping remote submit.")
                 return
 
-            # Basic credential check
             creds_path = Path.home() / ".kaggle" / "kaggle.json"
             if not creds_path.exists():
                 click.echo("❌ Kaggle credentials file ~/.kaggle/kaggle.json not found. Skipping remote submit.")
@@ -761,7 +774,6 @@ def submit(predictions_path: str, output_path: Optional[str], threshold: float, 
             if oct(creds_path.stat().st_mode)[-3:] not in {"600", "640"}:
                 click.echo("⚠️  Warning: kaggle.json permissions should be 600 (chmod 600 ~/.kaggle/kaggle.json)")
 
-            # Execute submission
             cmd = ["kaggle", "competitions", "submit", "-c", competition, "-f", str(sub_path), "-m", message]
             click.echo(f"🚀 Running: {' '.join(cmd)}")
             try:
@@ -771,7 +783,6 @@ def submit(predictions_path: str, output_path: Optional[str], threshold: float, 
                     click.echo(result.stderr.strip())
                 else:
                     click.echo("🎉 Kaggle submission uploaded successfully!")
-                    # Kaggle CLI usually prints the public score line; surface stdout
                     if result.stdout.strip():
                         click.echo(result.stdout.strip())
             except Exception as sub_e:
@@ -779,7 +790,6 @@ def submit(predictions_path: str, output_path: Optional[str], threshold: float, 
 
     except Exception as e:
         click.echo(f"❌ Submission creation failed: {e}")
-
 
 @cli.command()
 def info():

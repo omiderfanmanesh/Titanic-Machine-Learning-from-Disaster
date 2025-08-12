@@ -115,6 +115,9 @@ class IPredictor(ABC):
         """Generate probability predictions."""
         pass
 
+    def _resolve_threshold(self, inference_cfg):
+        pass
+
 
 class IFoldSplitter(ABC):
     """Interface for cross-validation fold splitting."""
