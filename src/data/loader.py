@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+
+from typing import Optional, Union, Tuple
+from pathlib import Path
+import pandas as pd
+
+from core.utils import LoggerFactory
+# from .interfaces import IDataLoader  # assuming you have this; keep your original import
+
 import pickle
 from pathlib import Path
 from typing import Optional, Tuple, Union
 
-import pandas as pd
 
 from core.interfaces import IDataLoader
 from core.utils import LoggerFactory
@@ -70,72 +77,89 @@ class TitanicDataLoader(IDataLoader):
 
 class KaggleDataLoader(IDataLoader):
     """Data loader that downloads from Kaggle competitions."""
-    
-    def __init__(self, competition: str, download_path: Union[str, Path] = "data/raw"):
+
+    def __init__(self, competition: str, download_path: Union[str, Path] = "data/raw", quiet: bool = True):
         self.competition = competition
         self.download_path = Path(download_path)
+        self.quiet = quiet
         self.logger = LoggerFactory.get_logger(__name__)
-        
-    def load(self, path: Optional[Union[str, Path]] = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Download and load competition data."""
+
+    # --- Public API ---
+
+    def download(self, dest: Optional[Union[str, Path]] = None) -> Path:
+        """
+        Download (and extract) competition files into dest (or self.download_path).
+        Returns the destination directory.
+        """
         try:
-            import kaggle
             from kaggle.api.kaggle_api_extended import KaggleApi
-        except ImportError:
-            raise ImportError("Kaggle API not available. Install with: pip install kaggle")
-        
-        # Initialize API
+        except ImportError as e:
+            raise ImportError("Kaggle API not available. Install with: pip install kaggle") from e
+
+        dest_path = Path(dest) if dest else self.download_path
+        dest_path.mkdir(parents=True, exist_ok=True)
+
         api = KaggleApi()
         api.authenticate()
-        
-        # Download competition files
-        self.download_path.mkdir(parents=True, exist_ok=True)
-        
-        self.logger.info(f"Downloading {self.competition} competition data...")
+
+        self.logger.info(f"Downloading '{self.competition}' competition data to {dest_path} ...")
         api.competition_download_files(
-            self.competition, 
-            path=str(self.download_path),
-            quiet=False
+            self.competition,
+            path=str(dest_path),
+            quiet=self.quiet is True  # Kaggle API expects bool
         )
-        
-        # Extract files if they are in a zip
-        self._extract_files()
-        
-        # Load the standard files
-        train_file = self.download_path / "train.csv"
-        test_file = self.download_path / "test.csv"
-        
-        if not train_file.exists():
-            raise FileNotFoundError(f"train.csv not found in {self.download_path}")
-        if not test_file.exists():
-            raise FileNotFoundError(f"test.csv not found in {self.download_path}")
-        
+
+        self._extract_files(dest_path)
+        self.logger.info(f"Download completed: {dest_path}")
+        return dest_path
+
+    # Backward compatibility for existing CLI usage
+    def download_competition_data(self, dest: Optional[Union[str, Path]] = None) -> Path:
+        """Alias to `download()` for backward-compat with CLI."""
+        return self.download(dest)
+
+    def load(self, path: Optional[Union[str, Path]] = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Load train/test CSVs from path (or self.download_path).
+        Does NOT download; call `.download()` first if needed.
+        """
+        base = Path(path) if path else self.download_path
+
+        train_file = base / "train.csv"
+        test_file  = base / "test.csv"
+
+        if not train_file.exists() or not test_file.exists():
+            raise FileNotFoundError(
+                f"Expected train.csv/test.csv in {base}. "
+                f"Run download() first or point to the correct directory."
+            )
+
         train_df = pd.read_csv(train_file)
-        test_df = pd.read_csv(test_file)
-        
+        test_df  = pd.read_csv(test_file)
         self.logger.info(f"Loaded Kaggle data - Train: {train_df.shape}, Test: {test_df.shape}")
-        
         return train_df, test_df
-    
-    def _extract_files(self) -> None:
-        """Extract downloaded zip files."""
-        import zipfile
-        
-        zip_files = list(self.download_path.glob("*.zip"))
-        for zip_file in zip_files:
-            with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-                zip_ref.extractall(self.download_path)
-                self.logger.info(f"Extracted {zip_file}")
-            
-            # Remove zip file after extraction
-            zip_file.unlink()
-    
+
     def validate_schema(self, df: pd.DataFrame) -> bool:
-        """Validate Kaggle competition data schema."""
-        # Use basic Titanic loader validation
+        """Validate Kaggle competition data schema via the Titanic loader."""
         loader = TitanicDataLoader()
         return loader.validate_schema(df)
 
+    # --- Internals ---
+
+    def _extract_files(self, base: Path) -> None:
+        """Extract any zip archives downloaded by the Kaggle API into base."""
+        import zipfile
+
+        zip_files = list(base.glob("*.zip"))
+        for zf in zip_files:
+            with zipfile.ZipFile(zf, "r") as z:
+                z.extractall(base)
+                self.logger.info(f"Extracted {zf.name}")
+            try:
+                zf.unlink()
+            except Exception:
+                # Non-fatal; leave the zip if we can't remove it
+                pass
 
 class CachedDataLoader(IDataLoader):
     """Data loader with caching support."""

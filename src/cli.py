@@ -41,6 +41,7 @@ config_manager = ConfigManager(path_manager.config_dir)
 logger = LoggerFactory.get_logger("titanic_ml.cli")
 
 
+
 @click.group()
 @click.option("--config-dir", type=click.Path(exists=True),
               help="Configuration directory path")
@@ -60,24 +61,75 @@ def cli(config_dir: Optional[str], debug: bool):
         logger.info("Debug mode enabled")
 
 
+
+@cli.command()
+@click.option("--input-path", type=click.Path(exists=True), required=True,
+              help="Path to the CSV to profile")
+@click.option("--output-dir", type=click.Path(), required=True,
+              help="Directory to save the profiling report")
+@click.option("--minimal/--full", default=True, show_default=True,
+              help="Use minimal mode (faster) vs full analysis")
+def analyze(input_path: str, output_dir: str, minimal: bool):
+    """Generate a data profiling HTML report."""
+    import os
+    import pandas as pd
+    from pathlib import Path
+
+    # --- robust import for both package names ---
+    ProfileReport = None
+    try:
+        from ydata_profiling import ProfileReport  # modern package
+    except Exception:
+        try:
+            from pandas_profiling import ProfileReport  # legacy name
+        except Exception as e:
+            click.echo(
+                "❌ ydata-profiling is not importable. Install with:\n"
+                "   pip install ydata-profiling\n"
+                "or legacy:\n"
+                "   pip install pandas-profiling"
+            )
+            return
+
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load data
+    df = pd.read_csv(input_path)
+
+    # Build report
+    title = f"Data Profile — {Path(input_path).name}"
+    profile = ProfileReport(
+        df,
+        title=title,
+        minimal=minimal,          # fast overview
+        explorative=not minimal,  # richer interactions in full mode
+        progress_bar=True,
+    )
+
+    # Save report
+    out_file = out_dir / "profile.html"
+    profile.to_file(out_file)
+
+    click.echo(f"✅ Profiling report saved to {out_file}")
+    click.echo(f"   Rows: {len(df):,} | Columns: {df.shape[1]}")
+
 @cli.command()
 @click.option("--competition", default="titanic", help="Kaggle competition name")
 @click.option("--output-dir", type=click.Path(), help="Output directory for data")
 def download(competition: str, output_dir: Optional[str]):
     """Download data from Kaggle competition."""
 
-    if output_dir:
-        data_dir = Path(output_dir)
-    else:
-        data_dir = path_manager.data_dir / "raw"
+    # Single source of truth for destination directory
+    data_dir = Path(output_dir) if output_dir else (path_manager.data_dir / "raw")
 
     try:
         from data.loader import KaggleDataLoader
-        loader = KaggleDataLoader(competition, path_manager.data_dir)
+        # Pass the chosen destination to the loader
+        loader = KaggleDataLoader(competition, data_dir)
         loader.download_competition_data()
 
-        click.echo(f"✅ Data downloaded to {data_dir}")
-
+        click.echo(f"✅ Data downloaded to {data_dir.resolve()}")
     except ImportError:
         click.echo("❌ Kaggle API not installed. Install with: pip install kaggle")
         click.echo("   Also ensure ~/.kaggle/kaggle.json contains your API credentials")
