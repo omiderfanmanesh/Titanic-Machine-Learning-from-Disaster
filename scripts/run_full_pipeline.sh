@@ -9,4 +9,6 @@ python src/cli.py train --experiment-config configs/experiment.yaml --data-confi
 
 python src/cli.py evaluate --run-dir <run-dir>
 
-python src/cli.py predict --run-dir <run-dir> --inference-config configs/inference.yamlpython src/cli.py submit --predictions-path <predictions-path> --remote -m "Submission message"
+python src/cli.py predict --run-dir <run-dir> --inference-config configs/inference.yaml
+
+python src/cli.py submit --predictions-path <predictions-path> --remote -m "Submission message"

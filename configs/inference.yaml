@@ -11,16 +11,17 @@ tta_noise_scale: 0.01
 output_path: artifacts/predictions.csv
 submission_path: artifacts/submission.csv
 
-# Post-processing
+# Thresholding (generic; no file path here)
 threshold:
-  value: 0.5  # Default threshold for binary classification
-  optimizer: true  # Optimize threshold based on validation set
-  method: accuracy  # Options: f1, accuracy, youdenj, cost
-  report: true  # Include optimal thresholds in reports
-  print: true   # Print optimal thresholds in CLI output
+  value: 0.5                # fallback if no file/override is given
+  optimizer: true           # used during EVAL to find thresholds
+  method: accuracy          # f1 | accuracy | youdenj | cost
+  cost_fp: 1.0              # only used if method=cost
+  cost_fn: 1.0
+  report: true
+  print: true
   report_path: artifacts/threshold_report.csv
+
 postprocessing:
   rules:
     - type: round_predictions
-
-

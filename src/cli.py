@@ -459,21 +459,64 @@ def evaluate(run_dir: str):
               help="Training run directory")
 @click.option("--inference-config", default="inference", help="Inference configuration name")
 @click.option("--output-path", type=click.Path(), help="Output path for predictions")
-def predict(run_dir: str, inference_config: str, output_path: Optional[str]):
+@click.option("--threshold-file", type=click.Path(exists=True),
+              help="Path to a file with a single float threshold (e.g., best_threshold.txt)")
+@click.option("--threshold", "threshold_value", type=float,
+              help="Numeric threshold override (e.g., 0.61)")
+def predict(run_dir: str, inference_config: str, output_path: Optional[str],
+            threshold_file: Optional[str], threshold_value: Optional[float]):
     """Generate predictions on test data."""
-
     try:
-        # Load configurations
-        inference_config_dict = config_manager.load_config(inference_config)
-        if 'model_paths' not in inference_config_dict or not inference_config_dict['model_paths']:
-            fold_models = sorted(Path(run_dir).glob('fold_*_model.joblib'))
-            inference_config_dict['model_paths'] = [str(p) for p in fold_models]
-        try:
-            InferenceConfig(**inference_config_dict)
-        except Exception:
-            pass  # proceed with raw dict
+        from pathlib import Path
+        import numpy as np
+        import pandas as pd  # <-- ensure imported ONCE at top of function (or at module level)
 
-        # Load processed test features
+        run_path = Path(run_dir)
+
+        # Load inference config
+        inference_cfg = config_manager.load_config(inference_config)
+        th_cfg = inference_cfg.get("threshold", {}) or {}
+
+        # Make run_dir available to the predictor for auto-discovery of artifacts
+        inference_cfg["run_dir"] = str(run_path)
+
+        # Ensure model paths
+        if not inference_cfg.get("model_paths"):
+            fold_models = sorted(run_path.glob("fold_*_model.joblib"))
+            inference_cfg["model_paths"] = [str(p) for p in fold_models]
+
+        # --- Resolve threshold source (file > numeric > best_threshold.txt > report > config.value) ---
+        used_src = "config"
+        if threshold_file:
+            th_cfg["file"] = str(threshold_file)
+            used_src = "cli:file"
+        elif threshold_value is not None:
+            th_cfg["value"] = float(threshold_value)
+            th_cfg.pop("file", None)
+            used_src = "cli:value"
+        else:
+            auto_file = run_path / "best_threshold.txt"
+            if auto_file.exists():
+                th_cfg["file"] = str(auto_file)
+                used_src = "auto:best_threshold.txt"
+            else:
+                # optional: read from threshold report in run_dir
+                report_file = run_path / "threshold_report.csv"
+                if report_file.exists():
+                    try:
+                        report_df = pd.read_csv(report_file)
+                        method = (th_cfg.get("method") or "accuracy").lower()
+                        if {"method", "threshold"}.issubset(report_df.columns):
+                            row = report_df.loc[report_df["method"].str.lower() == method]
+                            if not row.empty:
+                                th_cfg["value"] = float(row.iloc[0]["threshold"])
+                                used_src = f"auto:report[{method}]"
+                    except Exception as e:
+                        click.echo(f"⚠️ Could not read threshold from report: {e}")
+
+        inference_cfg["threshold"] = th_cfg
+
+        # Load processed test data
         processed_dir = path_manager.data_dir / "processed"
         test_path = processed_dir / "test_features.csv"
         if not test_path.exists():
@@ -482,63 +525,46 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str]):
         test_df = pd.read_csv(test_path)
         click.echo(f"📥 Loaded test data: {test_df.shape}")
 
-        # Prepare test data similarly to training (drop raw text cols) but keep PassengerId
-        drop_cols = [c for c in ['Name', 'Ticket', 'Cabin'] if c in test_df.columns]
+        # Prepare model input
+        drop_cols = [c for c in ["Name", "Ticket", "Cabin"] if c in test_df.columns]
         test_model_df = test_df.drop(columns=drop_cols) if drop_cols else test_df.copy()
-        if 'PassengerId' in test_model_df.columns:
-            test_model_df = test_model_df.set_index('PassengerId')
+        if "PassengerId" in test_model_df.columns:
+            test_model_df = test_model_df.set_index("PassengerId")
 
         # Load models
         model_loader = ModelLoader()
         models = model_loader.load_fold_models(run_dir)
         click.echo(f"🔄 Loaded {len(models)} fold models")
 
-        predictor = create_predictor(inference_config_dict)
+        # Predict (binary + proba)
+        predictor = create_predictor(inference_cfg)
         click.echo("🔮 Generating predictions...")
-        predictions = predictor.predict_proba(test_model_df, models, inference_config_dict)
-        # Rename probability column and add binary prediction for submission builder compatibility
-        if 'prediction' in predictions.columns:
-            predictions = predictions.rename(columns={'prediction': 'prediction_proba'})
-            # ThresholdOptimizer support from config
-            threshold = inference_config_dict.get('threshold', 0.5)
-            opt_cfg = inference_config_dict.get('threshold_optimizer', {})
-            if opt_cfg.get('enabled', False):
-                from eval.utils import ThresholdOptimizer
-                # If ground truth is available in predictions, use it
-                y_true = predictions['target'] if 'target' in predictions.columns else None
-                y_proba = predictions['prediction_proba']
-                if y_true is not None:
-                    optimizer = ThresholdOptimizer(y_true, y_proba)
-                    method = opt_cfg.get('method', 'f1')
-                    if method == 'f1':
-                        threshold, _ = optimizer.best_f1()
-                    elif method == 'accuracy':
-                        threshold, _ = optimizer.best_accuracy()
-                    elif method == 'youdenj':
-                        threshold, _ = optimizer.best_youdenj()
-                    elif method == 'cost':
-                        threshold, _ = optimizer.best_cost()
-            predictions['prediction'] = (predictions['prediction_proba'] >= threshold).astype(int)
-            click.echo(f"   📊 Threshold used: {threshold} (method: {opt_cfg.get('method', 'static') if opt_cfg.get('enabled', False) else 'static'})")
+        predictions = predictor.predict(test_model_df, models, inference_cfg)
 
         # Save predictions
-        if output_path:
-            pred_path = Path(output_path)
-        else:
-            # Save inside run directory for easier chaining
-            pred_path = Path(run_dir) / "predictions.csv"
+        pred_path = Path(output_path) if output_path else (run_path / "predictions.csv")
         predictions.to_csv(pred_path, index=False)
-
         click.echo(f"✅ Predictions saved to {pred_path}")
-        dist = predictions['prediction']
-        click.echo("   📊 Prediction distribution:")
-        click.echo(f"      Mean: {dist.mean():.3f}")
-        click.echo(f"      Std: {dist.std():.3f}")
-        click.echo(f"      Min: {dist.min():.3f}")
-        click.echo(f"      Max: {dist.max():.3f}")
+
+        # Report threshold actually used
+        try:
+            used_thr = predictor._resolve_threshold(inference_cfg)
+            click.echo(f"   📊 Threshold source: {used_src} | value: {used_thr:.4f}")
+        except Exception:
+            pass
+
+        # Distributions
+        dist_bin = predictions["prediction"].astype(float)
+        dist_proba = predictions["prediction_proba"].astype(float)
+        click.echo("   📊 Binary prediction distribution:")
+        click.echo(f"      Mean: {dist_bin.mean():.3f} | Std: {dist_bin.std():.3f} | "
+                   f"Min: {dist_bin.min():.3f} | Max: {dist_bin.max():.3f}")
+        click.echo("   📊 Probability distribution:")
+        click.echo(f"      Mean: {dist_proba.mean():.3f} | Std: {dist_proba.std():.3f} | "
+                   f"Min: {dist_proba.min():.3f} | Max: {dist_proba.max():.3f}")
+
     except Exception as e:
         click.echo(f"❌ Prediction failed: {e}")
-
 
 @cli.command()
 @click.option("--experiment-config", default="experiment", help="Experiment configuration name")
