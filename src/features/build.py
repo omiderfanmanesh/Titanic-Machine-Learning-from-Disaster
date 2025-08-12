@@ -27,10 +27,10 @@ class TitanicFeatureBuilder(ITransformer):
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or self._default_config()
         self.logger = LoggerFactory.get_logger(__name__)
-        
         self.pipeline: Optional[FeaturePipeline] = None
         self.encoders: Dict[str, LabelEncoder] = {}
         self.scaler: Optional[StandardScaler] = None
+        self._scale_columns: Optional[List[str]] = None
         self.is_fitted = False
     
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "TitanicFeatureBuilder":
@@ -72,11 +72,11 @@ class TitanicFeatureBuilder(ITransformer):
         # Apply encodings
         X_transformed = self._apply_encodings(X_transformed)
         
-        # Apply scaling
-        if self.scaler is not None:
-            numeric_cols = X_transformed.select_dtypes(include=['number']).columns
-            if len(numeric_cols) > 0:
-                X_transformed[numeric_cols] = self.scaler.transform(X_transformed[numeric_cols])
+        # Apply scaling only to fitted columns
+        if self.scaler is not None and self._scale_columns:
+            available_cols = [c for c in self._scale_columns if c in X_transformed.columns]
+            if available_cols:
+                X_transformed[available_cols] = self.scaler.transform(X_transformed[available_cols])
         
         self.logger.info(f"✅ Transformed data shape: {X_transformed.shape}")
         
@@ -143,7 +143,8 @@ class TitanicFeatureBuilder(ITransformer):
         if scale_cols:
             self.scaler = StandardScaler()
             self.scaler.fit(X[scale_cols])
-            self.logger.debug(f"Fitted scaler for {len(scale_cols)} numeric features")
+            self._scale_columns = list(scale_cols)
+            self.logger.debug(f"Fitted scaler for {len(scale_cols)} numeric features: {self._scale_columns}")
     
     def _handle_missing_values(self, X: pd.DataFrame) -> pd.DataFrame:
         """Handle missing values in the transformed data."""

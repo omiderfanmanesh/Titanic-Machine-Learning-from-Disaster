@@ -65,8 +65,26 @@ python src/cli.py predict --run-dir artifacts/20250812-150000
 
 ### Step 6: Create Submission (30 seconds)
 ```bash
-python src/cli.py submit --predictions-path artifacts/predictions.csv
+# Basic (default descriptive filename inside run dir)
+python src/cli.py submit --predictions-path artifacts/20250812-150000/predictions.csv
+
+# Force simple name (submission.csv)
+python src/cli.py submit --predictions-path artifacts/20250812-150000/predictions.csv --no-descriptive
+
+# Remote Kaggle submit (no metadata lines added)
+python src/cli.py submit --predictions-path artifacts/20250812-150000/predictions.csv --remote -m "First CV run"
 ```
+
+Descriptive filenames look like:
+`sub_random_forest_cv08769_oof08753_thr050_20250812-150000.csv`
+
+Pattern parts:
+- `sub` prefix
+- model name
+- cv + mean CV score (dots removed) 
+- oof + OOF AUC (dots removed) 
+- thr + threshold (dots removed)
+- run directory timestamp
 
 ## 🎉 Congratulations!
 

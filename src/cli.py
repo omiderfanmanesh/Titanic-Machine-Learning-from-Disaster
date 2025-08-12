@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -10,13 +13,13 @@ import click
 import pandas as pd
 
 from core.utils import (
-    ConfigManager,
     ExperimentConfig,
     DataConfig,
     InferenceConfig,
     LoggerFactory,
     PathManager,
     SeedManager,
+    ConfigManager,
 )
 from data.loader import TitanicDataLoader
 try:
@@ -143,9 +146,20 @@ def features(experiment_config: str, data_config: str):
         SeedManager.set_seed(experiment_cfg.seed)
         
         # Load data
-        loader = TitanicDataLoader(data_config_dict)
-        train_df = loader.load(data_cfg.train_path)
-        test_df = loader.load(data_cfg.test_path)
+        # Resolve paths (fallback if raw paths missing)
+        train_path = Path(data_cfg.train_path)
+        test_path = Path(data_cfg.test_path)
+        if not train_path.exists():
+            alt_train = Path('data') / train_path.name
+            if alt_train.exists():
+                train_path = alt_train
+        if not test_path.exists():
+            alt_test = Path('data') / test_path.name
+            if alt_test.exists():
+                test_path = alt_test
+
+        loader = TitanicDataLoader(train_path, test_path)
+        train_df, test_df = loader.load()
         
         # Apply debug mode if needed
         if experiment_cfg.debug_mode and experiment_cfg.debug_n_rows:
@@ -229,7 +243,15 @@ def train(experiment_config: str, data_config: str):
             click.echo(f"🐛 Debug mode: Using {len(train_df)} training samples")
         
         # Prepare data
-        X = train_df.drop(columns=[data_cfg.target_column])
+        # Drop target and ID column for modeling
+        drop_for_training = [data_cfg.target_column]
+        if data_cfg.id_column in train_df.columns:
+            drop_for_training.append(data_cfg.id_column)
+        X = train_df.drop(columns=drop_for_training)
+        # Drop raw text / identifier columns not yet encoded if present
+        drop_cols = [c for c in ['Name', 'Ticket', 'Cabin'] if c in X.columns]
+        if drop_cols:
+            X = X.drop(columns=drop_cols)
         y = train_df[data_cfg.target_column]
         
         # Create model
@@ -237,16 +259,20 @@ def train(experiment_config: str, data_config: str):
             "model_name": experiment_cfg.model_name,
             "model_params": experiment_cfg.model_params
         }
-        
-        model = ModelRegistry.create_model(experiment_cfg.model_name)
-        estimator = model.build(model_config)
+
+        registry = ModelRegistry()
+        model_wrapper = registry.create_model(experiment_cfg.model_name, experiment_cfg.model_params)
+        estimator = model_wrapper.build(model_config)
         
         # Create trainer
         trainer_config = {
             "strategy": experiment_cfg.cv_strategy,
             "n_folds": experiment_cfg.cv_folds,
             "shuffle": experiment_cfg.cv_shuffle,
-            "random_state": experiment_cfg.cv_random_state
+            "random_state": experiment_cfg.cv_random_state,
+            # Include model info for downstream artifact naming
+            "model_name": experiment_cfg.model_name,
+            "model_params": experiment_cfg.model_params
         }
         
         trainer = TitanicTrainer(trainer_config)
@@ -342,94 +368,249 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str]):
     try:
         # Load configurations
         inference_config_dict = config_manager.load_config(inference_config)
-        inference_cfg = InferenceConfig(**inference_config_dict)
-        
-        # Load test data
+        if 'model_paths' not in inference_config_dict or not inference_config_dict['model_paths']:
+            fold_models = sorted(Path(run_dir).glob('fold_*_model.joblib'))
+            inference_config_dict['model_paths'] = [str(p) for p in fold_models]
+        try:
+            InferenceConfig(**inference_config_dict)
+        except Exception:
+            pass  # proceed with raw dict
+
+        # Load processed test features
         processed_dir = path_manager.data_dir / "processed"
         test_path = processed_dir / "test_features.csv"
-        
         if not test_path.exists():
             click.echo("❌ Processed test data not found. Run 'features' command first.")
             return
-            
         test_df = pd.read_csv(test_path)
         click.echo(f"📥 Loaded test data: {test_df.shape}")
-        
+
+        # Prepare test data similarly to training (drop raw text cols) but keep PassengerId
+        drop_cols = [c for c in ['Name', 'Ticket', 'Cabin'] if c in test_df.columns]
+        test_model_df = test_df.drop(columns=drop_cols) if drop_cols else test_df.copy()
+        if 'PassengerId' in test_model_df.columns:
+            test_model_df = test_model_df.set_index('PassengerId')
+
         # Load models
         model_loader = ModelLoader()
         models = model_loader.load_fold_models(run_dir)
         click.echo(f"🔄 Loaded {len(models)} fold models")
-        
-        # Create predictor
+
         predictor = create_predictor(inference_config_dict)
-        
-        # Generate predictions
         click.echo("🔮 Generating predictions...")
-        predictions = predictor.predict_proba(test_df, models, inference_config_dict)
-        
+        predictions = predictor.predict_proba(test_model_df, models, inference_config_dict)
+        # Rename probability column and add binary prediction for submission builder compatibility
+        if 'prediction' in predictions.columns:
+            predictions = predictions.rename(columns={'prediction': 'prediction_proba'})
+            threshold = inference_config_dict.get('threshold', 0.5)
+            predictions['prediction'] = (predictions['prediction_proba'] >= threshold).astype(int)
+
         # Save predictions
         if output_path:
             pred_path = Path(output_path)
         else:
-            pred_path = path_manager.artifacts_dir / "predictions.csv"
-            
+            # Save inside run directory for easier chaining
+            pred_path = Path(run_dir) / "predictions.csv"
         predictions.to_csv(pred_path, index=False)
-        
+
         click.echo(f"✅ Predictions saved to {pred_path}")
-        click.echo(f"   📊 Prediction distribution:")
-        click.echo(f"      Mean: {predictions['prediction'].mean():.3f}")
-        click.echo(f"      Std: {predictions['prediction'].std():.3f}")
-        click.echo(f"      Min: {predictions['prediction'].min():.3f}")
-        click.echo(f"      Max: {predictions['prediction'].max():.3f}")
-        
+        dist = predictions['prediction']
+        click.echo("   📊 Prediction distribution:")
+        click.echo(f"      Mean: {dist.mean():.3f}")
+        click.echo(f"      Std: {dist.std():.3f}")
+        click.echo(f"      Min: {dist.min():.3f}")
+        click.echo(f"      Max: {dist.max():.3f}")
     except Exception as e:
         click.echo(f"❌ Prediction failed: {e}")
 
 
 @cli.command()
+@click.option("--experiment-config", default="experiment", help="Experiment configuration name")
+@click.option("--data-config", default="data", help="Data configuration name")
+@click.option("--inference-config", default="inference", help="Inference configuration name")
+@click.option("--competition", default="titanic", show_default=True, help="Kaggle competition slug")
+@click.option("--remote", is_flag=True, help="If set, perform remote Kaggle submission")
+@click.option("--message", "-m", default="Auto pipeline run", show_default=True, help="Submission message")
+def autopipeline(experiment_config: str, data_config: str, inference_config: str, competition: str, remote: bool, message: str):
+    """Run end-to-end: features -> train -> predict -> submit (optional remote)."""
+    try:
+        click.echo("🛠  Building features...")
+        ctx = click.get_current_context()
+        ctx.invoke(features, experiment_config=experiment_config, data_config=data_config)
+
+        click.echo("🧪 Training model...")
+        # Capture stdout from train by invoking and parsing run_dir from artifacts listing afterwards
+        before = set(p.name for p in path_manager.artifacts_dir.glob('20*'))
+        ctx.invoke(train, experiment_config=experiment_config, data_config=data_config)
+        after = sorted([p for p in path_manager.artifacts_dir.glob('20*') if p.name not in before], key=lambda x: x.stat().st_mtime, reverse=True)
+        if not after:
+            click.echo("❌ Could not determine training run directory")
+            return
+        run_dir = str(after[0])
+        click.echo(f"📁 Using run_dir: {run_dir}")
+
+        click.echo("🔮 Predicting on test set...")
+        ctx.invoke(predict, run_dir=run_dir, inference_config=inference_config, output_path=None)
+        pred_path = Path(run_dir) / 'predictions.csv'
+        if not pred_path.exists():
+            click.echo("❌ Predictions file not found; aborting submission step")
+            return
+
+        click.echo("📄 Building submission file...")
+        # Local submission first
+        submission_args = {
+            'predictions_path': str(pred_path),
+            'output_path': None,
+            'threshold': 0.5,
+            'competition': competition,
+            'remote': remote,
+            'message': message
+        }
+        ctx.invoke(submit, **submission_args)
+        click.echo("✅ Auto pipeline completed")
+    except Exception as e:
+        click.echo(f"❌ Auto pipeline failed: {e}")
+
+
+@cli.command()
 @click.option("--predictions-path", type=click.Path(exists=True), required=True,
-              help="Path to predictions CSV")
-@click.option("--output-path", type=click.Path(), help="Output path for submission")
-@click.option("--threshold", type=float, default=0.5, help="Classification threshold")
-def submit(predictions_path: str, output_path: Optional[str], threshold: float):
-    """Build Kaggle submission file."""
-    
+              help="Path to predictions CSV (probabilities or predictions)")
+@click.option("--output-path", type=click.Path(), help="Output path for submission CSV")
+@click.option("--threshold", type=float, default=0.5, help="Classification threshold when converting probabilities to classes")
+@click.option("--competition", default="titanic", show_default=True, help="Kaggle competition slug")
+@click.option("--remote", is_flag=True, help="If set, submit to Kaggle after building the local submission file")
+@click.option("--descriptive/--no-descriptive", default=True, show_default=True, help="Use descriptive filename with model+scores+timestamp (short form)")
+@click.option("--message", "-m", default="Automated submission", show_default=True, help="Kaggle submission message")
+def submit(predictions_path: str, output_path: Optional[str], threshold: float, competition: str, remote: bool, descriptive: bool, message: str):
+    """Build (and optionally remotely submit) a Kaggle submission file.
+
+    Typical usage:
+      titanic submit --predictions-path artifacts/2025.../predictions.csv --remote -m "First solid CV run"
+    """
+
     try:
         # Load predictions
         predictions_df = pd.read_csv(predictions_path)
-        
+
         # Create submission builder
         builder = TitanicSubmissionBuilder()
-        
-        # Build submission
-        config = {
-            "threshold": threshold,
-            "add_metadata": True
-        }
-        
+
+        # Build submission; disable metadata if remote (Kaggle rejects comment lines)
+        config = {"threshold": threshold, "add_metadata": not remote}
         submission = builder.build_submission(predictions_df, config)
-        
+
         # Validate submission
         if not builder.validate_submission(submission):
             click.echo("❌ Submission validation failed")
             return
-        
-        # Save submission
+
+        # Determine save path (apply compact descriptive naming if requested)
         if output_path:
             sub_path = Path(output_path)
         else:
-            sub_path = path_manager.artifacts_dir / "submission.csv"
-            
+            pred_path_obj = Path(predictions_path)
+            run_dir = pred_path_obj.parent
+            if descriptive:
+                model_name = "unknown"
+                mean_score = None
+                oof_score = None
+                try:
+                    tc_path = run_dir / "training_config.json"
+                    if tc_path.exists():
+                        import json as _json
+                        with open(tc_path, "r") as f:
+                            tc_data = _json.load(f)
+                            model_name = tc_data.get("model_name", model_name)
+                    scores_path = run_dir / "cv_scores.json"
+                    if scores_path.exists():
+                        import json as _json
+                        with open(scores_path, "r") as f:
+                            scores_data = _json.load(f)
+                            mean_score = scores_data.get("mean_score")
+                            oof_score = scores_data.get("oof_score")
+                except Exception:
+                    pass
+
+                def _fmt(val, digits):
+                    try:
+                        return f"{val:.{digits}f}".replace('.', '')
+                    except Exception:
+                        return "na"
+
+                safe_model = str(model_name).replace(' ', '-').replace('/', '-')
+                parts = ["sub", safe_model]
+                if mean_score is not None:
+                    parts.append(f"cv{_fmt(mean_score,4)}")
+                if oof_score is not None:
+                    parts.append(f"oof{_fmt(oof_score,4)}")
+                parts.append(f"thr{_fmt(threshold,2)}")
+                # Use run directory name (timestamp) for traceability
+                parts.append(run_dir.name)
+                filename = "_".join(parts) + ".csv"
+                sub_path = run_dir / filename
+
+                # Remove legacy generic submission.csv if present
+                generic = run_dir / "submission.csv"
+                if generic.exists():
+                    try:
+                        generic.unlink()
+                    except Exception:
+                        pass
+            else:
+                sub_path = run_dir / "submission.csv"
+
+        # Enrich config metadata for potential local metadata writing
+        if not remote:
+            # Provide model_name / cv_score for metadata if available
+            try:
+                if 'model_name' not in config:
+                    # Already loaded earlier? ensure existence
+                    pass
+            except Exception:
+                pass
+
         builder.save_submission(submission, sub_path, config)
-        
+
         # Summary statistics
         positive_rate = submission["Survived"].mean()
-        
         click.echo(f"✅ Submission created: {sub_path}")
         click.echo(f"   📊 Samples: {len(submission)}")
         click.echo(f"   📊 Positive rate: {positive_rate:.3f}")
         click.echo(f"   📊 Threshold used: {threshold}")
-        
+
+        if remote:
+            click.echo("🌐 Remote submission requested -- preparing Kaggle submission...")
+
+            kaggle_cli = shutil.which("kaggle")
+            if kaggle_cli is None:
+                click.echo("❌ Kaggle CLI not found. Install with: pip install kaggle")
+                click.echo("   Then place your API token at ~/.kaggle/kaggle.json (chmod 600). Skipping remote submit.")
+                return
+
+            # Basic credential check
+            creds_path = Path.home() / ".kaggle" / "kaggle.json"
+            if not creds_path.exists():
+                click.echo("❌ Kaggle credentials file ~/.kaggle/kaggle.json not found. Skipping remote submit.")
+                return
+            if oct(creds_path.stat().st_mode)[-3:] not in {"600", "640"}:
+                click.echo("⚠️  Warning: kaggle.json permissions should be 600 (chmod 600 ~/.kaggle/kaggle.json)")
+
+            # Execute submission
+            cmd = ["kaggle", "competitions", "submit", "-c", competition, "-f", str(sub_path), "-m", message]
+            click.echo(f"🚀 Running: {' '.join(cmd)}")
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                if result.returncode != 0:
+                    click.echo("❌ Kaggle submission failed:")
+                    click.echo(result.stderr.strip())
+                else:
+                    click.echo("🎉 Kaggle submission uploaded successfully!")
+                    # Kaggle CLI usually prints the public score line; surface stdout
+                    if result.stdout.strip():
+                        click.echo(result.stdout.strip())
+            except Exception as sub_e:
+                click.echo(f"❌ Error invoking Kaggle CLI: {sub_e}")
+
     except Exception as e:
         click.echo(f"❌ Submission creation failed: {e}")
 

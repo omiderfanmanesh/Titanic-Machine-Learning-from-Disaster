@@ -1,0 +1,6 @@
+{
+  "strategy": "stratified",
+  "n_folds": 5,
+  "shuffle": true,
+  "random_state": 42
+}

@@ -294,7 +294,8 @@ python src/cli.py predict --ensemble-models artifacts/*/model_*.joblib --output-
 # Create submission
 python src/cli.py submit --predictions-path production_predictions.csv \
                          --output-path "submissions/$(date +%Y%m%d_%H%M%S)_submission.csv" \
-                         --metadata production_metadata.json
+                         --descriptive \
+                         --remote -m "Production ensemble"
 
 echo "Production pipeline completed successfully!"
 ```
