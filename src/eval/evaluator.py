@@ -53,8 +53,8 @@ class TitanicEvaluator(IEvaluator):
         # Probability-based metrics (if available)
         if y_pred_proba is not None:
             metrics["auc"] = roc_auc_score(y_true, y_pred_proba)
-            metrics["log_loss"] = log_loss(y_true, y_pred_proba, eps=1e-15)
-            
+            metrics["log_loss"] = log_loss(y_true, y_pred_proba)
+
             # Brier score (mean squared error for probabilities)
             metrics["brier_score"] = np.mean((y_pred_proba - y_true) ** 2)
             
