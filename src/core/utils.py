@@ -130,17 +130,22 @@ class ConfigManager:
         """Load configuration from YAML file."""
         if use_cache and config_name in self._cache:
             return self._cache[config_name]
-            
-        config_path = self.config_dir / f"{config_name}.yaml"
+
+        config_path = Path(config_name)
+        # Use config_name directly if it's absolute or starts with "configs/"
+        if not config_path.is_absolute() and not str(config_path).startswith("configs/"):
+            config_path = self.config_dir / config_path
+        if not config_path.suffix == ".yaml":
+            config_path = config_path.with_suffix(".yaml")
         if not config_path.exists():
             raise FileNotFoundError(f"Config file not found: {config_path}")
-            
+
         with config_path.open("r") as f:
             config = yaml.safe_load(f) or {}
-            
+
         if use_cache:
             self._cache[config_name] = config
-            
+
         return config
     
     def get_config_hash(self, config: Dict[str, Any]) -> str:
@@ -189,6 +194,7 @@ class CacheKeyGenerator:
 # Configuration schemas using Pydantic
 class ExperimentConfig(BaseModel):
     """Schema for experiment configuration."""
+    model_config = {'protected_namespaces': ()}
     name: str = Field(..., description="Experiment name")
     seed: int = Field(42, description="Random seed for reproducibility")
     debug_mode: bool = Field(False, description="Whether to run in debug mode")
@@ -228,6 +234,7 @@ class DataConfig(BaseModel):
 
 class InferenceConfig(BaseModel):
     """Schema for inference configuration."""
+    model_config = {'protected_namespaces': ()}
     model_paths: List[str] = Field(..., description="Paths to trained models")
     ensemble_method: str = Field("average", description="Ensemble method")
     ensemble_weights: Optional[List[float]] = Field(None, description="Ensemble weights")
