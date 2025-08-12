@@ -94,13 +94,14 @@ def validate(config: str) -> None:
     logger.info("Starting data validation...")
     
     # Load configuration
-    config_manager = ConfigManager()
+    path_manager = PathManager()
+    config_manager = ConfigManager(path_manager.config_dir)
     data_config = config_manager.load_config(config)
     
     # Load data
     loader = TitanicDataLoader(
-        train_file=data_config["data"]["train_file"],
-        test_file=data_config["data"]["test_file"]
+        train_file=data_config["train_path"],
+        test_file=data_config["test_path"]
     )
     train_df, test_df = loader.load()
     
@@ -444,7 +445,8 @@ def info():
     click.echo(f"   📁 Artifacts dir: {path_manager.artifacts_dir}")
     
     click.echo(f"\n🤖 Available models:")
-    available_models = ModelRegistry.get_available_models()
+    registry = ModelRegistry()
+    available_models = registry.get_available_models()
     for model in sorted(available_models):
         click.echo(f"   - {model}")
     
