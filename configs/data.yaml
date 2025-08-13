@@ -1,13 +1,11 @@
-# Data configuration for Titanic competition
+# data.yaml
 train_path: data/raw/train.csv
 test_path: data/raw/test.csv
 target_column: Survived
 id_column: PassengerId
 
-# Task configuration
 task_type: binary
 
-# Schema definition
 required_columns:
   - PassengerId
   - Survived
@@ -22,18 +20,49 @@ required_columns:
   - Cabin
   - Embarked
 
-numeric_columns:
-  - Age
-  - SibSp
-  - Parch
-  - Fare
+numeric_columns: [Age, SibSp, Parch, Fare]
+# Pclass is numeric in CSV but treated as categorical in modeling:
+categorical_columns: [Sex, Embarked, Pclass]
 
-categorical_columns:
-  - Sex
-  - Embarked
-  - Pclass
-
-# Preprocessing options
 handle_missing: true
 scale_features: true
-encode_categoricals: true
+encode_categorical: true
+skip_encoding_columns: [PassengerId, Name, Ticket]
+
+add_family_features: true
+add_title_features: true
+add_deck_features: false
+add_ticket_features: false
+transform_fare: true
+
+log_transform_fare: true
+add_age_bins: false
+age_bins: 5
+add_missing_indicators: true
+
+# optional if your TitleTransform uses it
+rare_title_threshold: 10
+
+# =========================
+# NEW: encoder configuration
+# =========================
+encoding:
+  default:
+    method: onehot
+    handle_missing: "value"
+    handle_unknown: "ignore"
+
+  per_column:
+    # CatBoostEncoder
+    Title:
+      method: catboost
+      a: 1.0
+
+    # Leave-One-Out
+    Cabin:
+      method: leave_one_out
+      sigma: 0.1
+
+    # WOE (binary target expected)
+    Embarked:
+      method: woe

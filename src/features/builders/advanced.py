@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from typing import List, Optional, Dict, Any
-from features.titanic_feature_builder import TitanicFeatureBuilder
+from features.builders.titanic import TitanicFeatureBuilder
 from core.interfaces import ITransformer
 
 

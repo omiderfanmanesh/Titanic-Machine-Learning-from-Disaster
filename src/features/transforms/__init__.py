@@ -9,7 +9,6 @@ from .ticket_group import TicketGroupTransform
 from .fare import FareTransform
 from .age_binning import AgeBinningTransform
 from .missing_value_indicator import MissingValueIndicatorTransform
-from .pipeline import FeaturePipeline
 from .family_size import FamilySizeTransform
 
 __all__ = [
@@ -19,6 +18,5 @@ __all__ = [
     "FareTransform",
     "AgeBinningTransform",
     "MissingValueIndicatorTransform",
-    "FeaturePipeline",
     "FamilySizeTransform",
 ]

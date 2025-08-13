@@ -1,13 +1,24 @@
+# features.yaml
 features:
-  scale_numeric: true
-  encode_categorical: true
-  impute_numeric: median
-  impute_categorical: most_frequent
-  add_family: true
-  add_is_alone: true
-  add_title: true
-  add_deck: false
-  add_ticket_group_size: false
-  log_fare: true
-  bin_age: false
+  add_family_features: true
+  add_title_features: true
+  add_deck_features: false
+  add_ticket_features: false
+
+  transform_fare: true
+  log_transform_fare: true
+
+  add_age_bins: false
+  age_bins: 5
+
+  add_missing_indicators: true
+  scale_features: true
+
+  # optional: merged with DataConfig.skip_encoding_columns
+  skip_encoding_columns:
+    - PassengerId
+    - Name
+    - Ticket
+
+  # optional: if your TitleTransform uses it
   rare_title_threshold: 10

@@ -3,18 +3,15 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Optional
 
 import click
 import pandas as pd
-import subprocess
 
 from core.utils import (
     ExperimentConfig,
     DataConfig,
-    InferenceConfig,
     LoggerFactory,
     PathManager,
     SeedManager,
@@ -27,12 +24,11 @@ try:
 except ImportError:
     VALIDATION_AVAILABLE = False
     TitanicDataValidator = None  # Ensure it's defined in the except block
-from features.build import create_feature_builder
+from features import create_feature_builder
 from modeling.model_registry import ModelRegistry
 from modeling.trainers import TitanicTrainer
 from eval.evaluator import TitanicEvaluator
 from infer.predictor import create_predictor, ModelLoader
-from submit.build_submission import TitanicSubmissionBuilder
 
 
 # Global objects
@@ -49,11 +45,9 @@ logger = LoggerFactory.get_logger("titanic_ml.cli")
 def cli(config_dir: Optional[str], debug: bool):
     """Titanic ML Pipeline - Professional ML pipeline for Kaggle competition."""
     global path_manager, config_manager
-
     if config_dir:
         path_manager.config_dir = Path(config_dir)
         config_manager = ConfigManager(path_manager.config_dir)
-
     # Ensure directories exist
     path_manager.ensure_directories()
 
@@ -71,7 +65,6 @@ def cli(config_dir: Optional[str], debug: bool):
               help="Use minimal mode (faster) vs full analysis")
 def analyze(input_path: str, output_dir: str, minimal: bool):
     """Generate a data profiling HTML report."""
-    import os
     import pandas as pd
     from pathlib import Path
 
@@ -182,7 +175,8 @@ def validate(config: str) -> None:
 @cli.command()
 @click.option("--experiment-config", default="experiment", help="Experiment configuration name")
 @click.option("--data-config", default="data", help="Data configuration name")
-def features(experiment_config: str, data_config: str):
+@click.option("--features-config", type=click.Path(exists=True), help="Path to features.yaml configuration file")
+def features(experiment_config: str, data_config: str, features_config: Optional[str]):
     """Build features for training and test data."""
 
     try:
@@ -217,17 +211,9 @@ def features(experiment_config: str, data_config: str):
             train_df = train_df.head(experiment_cfg.debug_n_rows)
             click.echo(f"🐛 Debug mode: Using {len(train_df)} training samples")
 
-        # Build features
-        feature_config = {
-            "add_family_features": True,
-            "add_title_features": True,
-            "add_deck_features": True,
-            "add_ticket_features": True,
-            "transform_fare": True,
-            "add_missing_indicators": True
-        }
 
-        feature_builder = create_feature_builder(feature_config, debug=experiment_cfg.debug_mode)
+
+        feature_builder = create_feature_builder(data_cfg, debug=experiment_cfg.debug_mode)
 
         # Fit on training data
         X_train = train_df.drop(columns=[data_cfg.target_column])
@@ -561,7 +547,11 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str],
                         if {"method", "threshold"}.issubset(report_df.columns):
                             row = report_df.loc[report_df["method"].str.lower() == method]
                             if not row.empty:
-                                th_cfg["value"] = float(row.iloc[0]["threshold"])
+                                threshold_value = row.iloc[0]["threshold"]
+                                if isinstance(threshold_value, pd.Series):
+                                    th_cfg["value"] = float(threshold_value.values[0])
+                                else:
+                                    th_cfg["value"] = float(threshold_value)
                                 used_src = f"auto:report[{method}]"
                     except Exception as e:
                         click.echo(f"⚠️ Could not read threshold from report: {e}")

@@ -185,3 +185,14 @@ class ICache(ABC):
     def clear(self) -> None:
         """Clear all cached values."""
         pass
+
+
+class IEncoderStrategy:
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "IEncoderStrategy":
+        raise NotImplementedError
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        raise NotImplementedError
+
+    def output_columns(self) -> List[str]:
+        raise NotImplementedError

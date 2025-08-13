@@ -212,26 +212,6 @@ class ExperimentConfig(BaseModel):
     logging_level: str = Field("INFO", description="Logging level")
 
 
-class DataConfig(BaseModel):
-    """Schema for data configuration."""
-    train_path: str = Field(..., description="Path to training data")
-    test_path: str = Field(..., description="Path to test data")
-    target_column: str = Field(..., description="Target column name")
-    id_column: str = Field(..., description="ID column name")
-    
-    task_type: str = Field(..., description="Task type: binary, multiclass, regression")
-    
-    # Data validation
-    required_columns: List[str] = Field(default_factory=list)
-    numeric_columns: List[str] = Field(default_factory=list)
-    categorical_columns: List[str] = Field(default_factory=list)
-    
-    # Preprocessing
-    handle_missing: bool = Field(True, description="Whether to handle missing values")
-    scale_features: bool = Field(True, description="Whether to scale numeric features")
-    encode_categoricals: bool = Field(True, description="Whether to encode categorical features")
-
-
 class InferenceConfig(BaseModel):
     """Schema for inference configuration."""
     model_config = {'protected_namespaces': ()}
@@ -244,3 +224,42 @@ class InferenceConfig(BaseModel):
     
     output_path: str = Field(..., description="Output path for predictions")
     submission_path: str = Field(..., description="Output path for submission file")
+
+class DataConfig(BaseModel):
+    train_path: str
+    test_path: str
+    target_column: str
+    id_column: str
+    task_type: str
+    required_columns: List[str] = Field(default_factory=list)
+    numeric_columns: List[str] = Field(default_factory=list)
+    categorical_columns: List[str] = Field(default_factory=list)
+    handle_missing: bool = True
+    scale_features: bool = True
+    encode_categorical: bool = True
+    add_family_features: bool = True
+    add_title_features: bool = True
+    add_deck_features: bool = True
+    add_ticket_features: bool = False
+    transform_fare: bool = True
+    log_transform_fare: bool = False
+    add_age_bins: bool = False
+    age_bins: int = 5
+    add_missing_indicators: bool = True
+    skip_encoding_columns: List[str] = Field(default_factory=list)
+    rare_title_threshold: Optional[int] = None
+
+    # NEW: flexible encoder config
+    encoding: Dict[str, Any] = Field(
+        default_factory=lambda: {
+            "default": {"method": "onehot", "handle_missing": "value", "handle_unknown": "ignore"},
+            "per_column": {}
+        }
+    )
+
+    def to_dict(self, include_none: bool = False) -> dict:
+        """Return this config as a plain dictionary."""
+        return self.dict(
+            exclude_none=not include_none,
+            by_alias=True
+        )
