@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, root_validator
 
 
 class LoggerFactory:
@@ -225,41 +225,52 @@ class InferenceConfig(BaseModel):
     output_path: str = Field(..., description="Output path for predictions")
     submission_path: str = Field(..., description="Output path for submission file")
 
+
+
+
+
+
 class DataConfig(BaseModel):
+    # ---- Core ----
     train_path: str
     test_path: str
     target_column: str
     id_column: str
     task_type: str
-    required_columns: List[str] = Field(default_factory=list)
-    numeric_columns: List[str] = Field(default_factory=list)
-    categorical_columns: List[str] = Field(default_factory=list)
-    handle_missing: bool = True
-    scale_features: bool = True
-    encode_categorical: bool = True
-    add_family_features: bool = True
-    add_title_features: bool = True
-    add_deck_features: bool = True
-    add_ticket_features: bool = False
-    transform_fare: bool = True
-    log_transform_fare: bool = False
-    add_age_bins: bool = False
-    age_bins: int = 5
-    add_missing_indicators: bool = True
-    skip_encoding_columns: List[str] = Field(default_factory=list)
-    rare_title_threshold: Optional[int] = None
 
-    # NEW: flexible encoder config
-    encoding: Dict[str, Any] = Field(
-        default_factory=lambda: {
-            "default": {"method": "onehot", "handle_missing": "value", "handle_unknown": "ignore"},
-            "per_column": {}
-        }
-    )
+    required_columns: List[str]
+    numeric_columns: List[str]
+    categorical_columns: List[str]
+
+    # ---- Global switches ----
+    handle_missing: bool
+    scale_features: bool
+    encode_categorical: bool
+
+    # ---- Other params used by transforms ----
+    log_transform_fare: bool
+    age_bins: int
+    rare_title_threshold: Optional[int]
+    skip_encoding_columns: List[str]
+
+    # ---- Encoding ----
+    encoding: Dict[str, Any]
+
+    # ---- Imputation config ----
+    imputation: Dict[str, Any]
+
+    # ---- Feature engineering stages ----
+    feature_engineering: Dict[str, List[str]]
+
+    # ---------- Convenience helpers ----------
+    def pre_impute_transforms(self) -> List[str]:
+        """List of transform class names to run before imputation."""
+        return list(self.feature_engineering.get("pre_impute", []))
+
+    def post_impute_transforms(self) -> List[str]:
+        """List of transform class names to run after imputation."""
+        return list(self.feature_engineering.get("post_impute", []))
 
     def to_dict(self, include_none: bool = False) -> dict:
         """Return this config as a plain dictionary."""
-        return self.dict(
-            exclude_none=not include_none,
-            by_alias=True
-        )
+        return self.dict(exclude_none=not include_none, by_alias=True)

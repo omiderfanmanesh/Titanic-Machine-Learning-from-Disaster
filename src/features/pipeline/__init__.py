@@ -1,17 +1,4 @@
-"""Atomic feature transformations following SOLID principles."""
-
-from __future__ import annotations
-
-from .pipeline import FeaturePipeline
-
-
-__all__ = [
-
-    "FeaturePipeline",
-
-]
-
-from typing import List, Dict, Any
+from features.pipeline.pipeline import FeaturePipeline
 from features.transforms import (
     FamilySizeTransform,
     TitleTransform,
@@ -19,25 +6,35 @@ from features.transforms import (
     TicketGroupTransform,
     FareTransform,
     AgeBinningTransform,
-    MissingValueIndicatorTransform,
 )
-from core.interfaces import ITransformer
 
+TRANSFORM_MAP = {
+    "FamilySizeTransform": FamilySizeTransform,
+    "TitleTransform": TitleTransform,
+    "DeckTransform": DeckTransform,
+    "TicketGroupTransform": TicketGroupTransform,
+    "FareTransform": FareTransform,
+    "AgeBinningTransform": AgeBinningTransform,
+}
 
-def build_pipeline(config: Dict[str, Any]) -> FeaturePipeline:
-    transforms: List[ITransformer] = []
-    if config.get("add_family_features", True):
-        transforms.append(FamilySizeTransform())
-    if config.get("add_title_features", True):
-        transforms.append(TitleTransform())
-    if config.get("add_deck_features", True):
-        transforms.append(DeckTransform())
-    if config.get("add_ticket_features", False):
-        transforms.append(TicketGroupTransform())
-    if config.get("transform_fare", True):
-        transforms.append(FareTransform(log_transform=config.get("log_transform_fare", False)))
-    if config.get("add_age_bins", False):
-        transforms.append(AgeBinningTransform(n_bins=config.get("age_bins", 5)))
-    if config.get("add_missing_indicators", True):
-        transforms.append(MissingValueIndicatorTransform())
+def build_pipeline_from_config(stage_list: list, config: dict):
+    transforms = []
+    for name in stage_list:
+        if name not in TRANSFORM_MAP:
+            raise ValueError(f"Unknown transform: {name}")
+        # Pass config to transforms if they take parameters
+        if name == "FareTransform":
+            transforms.append(FareTransform(log_transform=config.get("log_transform_fare", False)))
+        elif name == "AgeBinningTransform":
+            transforms.append(AgeBinningTransform(n_bins=config.get("age_bins", 5)))
+        else:
+            transforms.append(TRANSFORM_MAP[name]())
     return FeaturePipeline(transforms)
+
+def build_pipeline_pre(config):
+    stage_list = config.get("feature_engineering", {}).get("pre_impute", [])
+    return build_pipeline_from_config(stage_list, config)
+
+def build_pipeline_post(config):
+    stage_list = config.get("feature_engineering", {}).get("post_impute", [])
+    return build_pipeline_from_config(stage_list, config)

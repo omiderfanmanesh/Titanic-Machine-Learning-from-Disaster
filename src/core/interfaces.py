@@ -196,3 +196,28 @@ class IEncoderStrategy:
 
     def output_columns(self) -> List[str]:
         raise NotImplementedError
+
+
+
+
+class ImputationStrategy:
+    """Strategy for imputing a SINGLE column. SRP: each class handles one way to impute."""
+    def __init__(self, column: str, plan: Dict[str, Any]):
+        self.column = column
+        self.plan = plan
+
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> None:
+        raise NotImplementedError
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        raise NotImplementedError
+
+class EstimatorFactory:
+    """Abstract factory for model estimators."""
+    def make(self, plan: Dict[str, Any]):
+        raise NotImplementedError
+
+class FeaturePreprocessor:
+    """Builds the preprocessor for model imputers (e.g., ColumnTransformer)."""
+    def build(self, X: pd.DataFrame, features: List[str]):
+        raise NotImplementedError

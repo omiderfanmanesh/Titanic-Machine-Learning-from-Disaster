@@ -1,9 +1,10 @@
-# data.yaml
+# =========================
+# DATA & TASK
+# =========================
 train_path: data/raw/train.csv
 test_path: data/raw/test.csv
 target_column: Survived
 id_column: PassengerId
-
 task_type: binary
 
 required_columns:
@@ -20,49 +21,91 @@ required_columns:
   - Cabin
   - Embarked
 
+# What we want the model to treat as numeric/categorical (post-FE)
 numeric_columns: [Age, SibSp, Parch, Fare]
-# Pclass is numeric in CSV but treated as categorical in modeling:
-categorical_columns: [Sex, Embarked, Pclass]
+categorical_columns: [Sex, Embarked, Pclass, Deck, Title]
 
+# =========================
+# GLOBAL SWITCHES
+# =========================
 handle_missing: true
-scale_features: true
 encode_categorical: true
-skip_encoding_columns: [PassengerId, Name, Ticket]
+scale_features: true
 
-add_family_features: true
-add_title_features: true
-add_deck_features: false
-add_ticket_features: false
-transform_fare: true
+# Only keep the ID as passthrough
+skip_encoding_columns: [PassengerId]
 
+# Params used by transforms
 log_transform_fare: true
-add_age_bins: false
 age_bins: 5
-add_missing_indicators: true
-
-# optional if your TitleTransform uses it
 rare_title_threshold: 10
 
 # =========================
-# NEW: encoder configuration
+# ENCODING
 # =========================
 encoding:
   default:
     method: onehot
     handle_missing: "value"
     handle_unknown: "ignore"
+  per_column:
+    Title:
+      method: catboost         # numeric target encoding → 1 column
+      a: 1.0
+    Deck:
+      method: onehot           # safe, low-cardinality one-hot
+    Embarked:
+      method: onehot           # S/C/Q one-hot (clearer than single WOE col)
+
+# =========================
+# IMPUTATION
+# =========================
+imputation:
+  # Fill Fare first, then predict Age using Fare + other features
+  order: [Fare, Age]
+
+  # Skip ID/text/engineered categoricals; we don't need to fill them
+  exclude: [PassengerId, Name, Ticket, Title, Deck]
+
+  default:
+    numeric: median
+    categorical: constant
+    fill_value: "Unknown"
+    add_missing_indicators: true
+    missing_indicator_prefix: "__miss_"
+    debug: true
 
   per_column:
-    # CatBoostEncoder
-    Title:
-      method: catboost
-      a: 1.0
+    Age:
+      method: model
+      estimator: random_forest
+      features: [Pclass, Sex, SibSp, Parch, Fare, Embarked, Title]
+      n_estimators: 400
+      max_depth: null
+      random_state: 42
+      clip_min: 0
+      clip_max: 80
 
-    # Leave-One-Out
-    Cabin:
-      method: leave_one_out
-      sigma: 0.1
+    Fare:
+      method: mean
+      clip_min: 0
 
-    # WOE (binary target expected)
     Embarked:
-      method: woe
+      method: constant
+      fill_value: "S"
+
+    Cabin:
+      method: most_frequent
+
+# =========================
+# FEATURE ENGINEERING STAGES (order matters)
+# =========================
+feature_engineering:
+  pre_impute:
+    - FamilySizeTransform      # → FamilySize, IsAlone
+    - TitleTransform           # → Title (uses rare_title_threshold)
+    - DeckTransform            # → Deck (maps missing to 'U')
+    - TicketGroupTransform     # → TicketGroupSize (numeric)
+  post_impute:
+    - FareTransform            # clip>=0, then optional log to Fare_log
+    - AgeBinningTransform      # → AgeBin (numeric)
