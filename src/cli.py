@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +17,7 @@ from core.utils import (
     PathManager,
     SeedManager,
     ConfigManager,
+    Timer,
 )
 from data.loader import TitanicDataLoader
 try:
@@ -211,9 +213,19 @@ def features(experiment_config: str, data_config: str, features_config: Optional
             train_df = train_df.head(experiment_cfg.debug_n_rows)
             click.echo(f"🐛 Debug mode: Using {len(train_df)} training samples")
 
+        # Build features
+        feature_config_path = Path(features_config) if features_config else path_manager.config_dir / "features.yaml"
 
+        # Load feature configuration properly
+        if features_config:
+            # Load custom features config if provided
+            feature_config_dict = config_manager.load_config_from_path(feature_config_path)
+            feature_cfg = DataConfig(**feature_config_dict)
+        else:
+            # Use the data config for feature building (standard approach)
+            feature_cfg = data_cfg
 
-        feature_builder = create_feature_builder(data_cfg, debug=experiment_cfg.debug_mode)
+        feature_builder = create_feature_builder(feature_cfg, debug=experiment_cfg.debug_mode)
 
         # Fit on training data
         X_train = train_df.drop(columns=[data_cfg.target_column])
@@ -934,7 +946,212 @@ def create_config(config_name: str, template: str):
     with open(config_path, "w") as f:
         yaml.dump(templates[template], f, default_flow_style=False, indent=2)
 
-    click.echo(f"✅ Configuration created: {config_path}")
+    click.echo(f"��� Configuration created: {config_path}")
+
+
+@cli.command()
+@click.option("--strategy", default="standard",
+              type=click.Choice(["quick", "standard", "comprehensive"]),
+              help="Tuning strategy: quick (25 trials), standard (100 trials), comprehensive (200 trials)")
+@click.option("--model", "-m", "model_name",
+              help="Specific model to tune (e.g., logistic, random_forest). If not specified, tunes all enabled models")
+@click.option("--n-trials", type=int,
+              help="Number of trials to run (overrides strategy default)")
+@click.option("--timeout", type=int,
+              help="Maximum time in seconds (overrides strategy default)")
+@click.option("--experiment-config", default="experiment", help="Experiment configuration name")
+@click.option("--data-config", default="data", help="Data configuration name")
+@click.option("--tuning-config", default="tuning", help="Tuning configuration name")
+@click.option("--features-config", type=click.Path(exists=True), help="Path to features.yaml configuration file")
+def tune(strategy: str, model_name: Optional[str], n_trials: Optional[int],
+         timeout: Optional[int], experiment_config: str, data_config: str,
+         tuning_config: str, features_config: Optional[str]):
+    """Perform hyperparameter tuning using Optuna."""
+    try:
+        from tuning import HyperparameterTuner, SearchSpaceFactory
+
+        click.echo("🔧 Starting hyperparameter tuning...")
+
+        # Load configurations
+        exp_config = config_manager.load_config(experiment_config)
+        data_config_dict = config_manager.load_config(data_config)
+        tuning_config_dict = config_manager.load_config(tuning_config)
+
+        experiment_cfg = ExperimentConfig(**exp_config)
+        data_cfg = DataConfig(**data_config_dict)
+
+        # Set seed
+        SeedManager.set_seed(experiment_cfg.seed)
+
+        # Load and prepare data - use processed data if available
+        processed_dir = path_manager.data_dir / "processed"
+        train_processed_path = processed_dir / "train_features.csv"
+
+        if train_processed_path.exists():
+            # Use existing processed data
+            click.echo(f"📊 Using existing processed data from {train_processed_path}")
+            train_df = pd.read_csv(train_processed_path)
+
+            # Prepare data for modeling
+            drop_for_training = [data_cfg.target_column]
+            if data_cfg.id_column in train_df.columns:
+                drop_for_training.append(data_cfg.id_column)
+            X = train_df.drop(columns=drop_for_training)
+
+            # Drop raw text / identifier columns not yet encoded if present
+            drop_cols = [c for c in ['Name', 'Ticket', 'Cabin'] if c in X.columns]
+            if drop_cols:
+                X = X.drop(columns=drop_cols)
+            y = train_df[data_cfg.target_column]
+
+        else:
+            # Fallback to raw data + feature engineering if processed data doesn't exist
+            train_path = Path(data_cfg.train_path)
+            if not train_path.exists():
+                alt_train = Path('data') / train_path.name
+                if alt_train.exists():
+                    train_path = alt_train
+
+            loader = TitanicDataLoader(str(train_path), None)
+            result = loader.load()
+
+            # Handle the loader return value properly
+            if isinstance(result, tuple):
+                train_df, _ = result
+            else:
+                train_df = result
+
+            # Build features
+            feature_config_path = Path(features_config) if features_config else path_manager.config_dir / "features.yaml"
+
+            # Load feature configuration properly
+            if features_config:
+                # Load custom features config if provided
+                feature_config_dict = config_manager.load_config_from_path(feature_config_path)
+                feature_cfg = DataConfig(**feature_config_dict)
+            else:
+                # Use the data config for feature building (standard approach)
+                feature_cfg = data_cfg
+
+            feature_builder = create_feature_builder(feature_cfg, debug=experiment_cfg.debug_mode)
+
+            with Timer(logger, "feature engineering"):
+                # Use the correct fit/transform interface instead of build_features
+                feature_builder.fit(train_df.drop(columns=["Survived"]), train_df["Survived"])
+                X = feature_builder.transform(train_df.drop(columns=["Survived"]))
+                y = train_df["Survived"]
+
+        click.echo(f"📊 Training data prepared: {X.shape}")
+
+        # Apply strategy overrides
+        strategy_config = tuning_config_dict.get("strategies", {}).get(strategy, {})
+        if strategy_config:
+            if n_trials is None:
+                n_trials = strategy_config.get("n_trials")
+            if timeout is None:
+                timeout = strategy_config.get("timeout")
+
+            # Filter models based on strategy
+            if model_name is None:
+                enabled_models = strategy_config.get("models", [])
+            else:
+                enabled_models = [model_name] if model_name in strategy_config.get("models", [model_name]) else [model_name]
+        else:
+            # Use all enabled models from config
+            if model_name is None:
+                enabled_models = [name for name, config in tuning_config_dict.get("models", {}).items()
+                                if config.get("enabled", True)]
+            else:
+                enabled_models = [model_name]
+
+        # Override config with CLI parameters
+        if n_trials:
+            tuning_config_dict["study"]["n_trials"] = n_trials
+        if timeout:
+            tuning_config_dict["study"]["timeout"] = timeout
+
+        click.echo(f"🎯 Strategy: {strategy}")
+        click.echo(f"🔢 Trials: {tuning_config_dict['study']['n_trials']}")
+        click.echo(f"⏱️  Timeout: {tuning_config_dict['study'].get('timeout', 'unlimited')}s")
+        click.echo(f"🤖 Models: {', '.join(enabled_models)}")
+
+        # Create tuner
+        tuner = HyperparameterTuner(tuning_config_dict)
+
+        # CV configuration
+        cv_config = {
+            "strategy": tuning_config_dict.get("cv", {}).get("strategy", "stratified"),
+            "n_folds": tuning_config_dict.get("cv", {}).get("n_folds", 5),
+            "shuffle": tuning_config_dict.get("cv", {}).get("shuffle", True),
+            "random_state": tuning_config_dict.get("cv", {}).get("random_state", 42)
+        }
+
+        # Tune each model
+        all_results = {}
+        for model in enabled_models:
+            if model not in SearchSpaceFactory.get_available_models():
+                click.echo(f"⚠️  Skipping {model}: no search space defined")
+                continue
+
+            click.echo(f"\n🚀 Tuning {model}...")
+
+            try:
+                results = tuner.tune_model(model, X, y, cv_config)
+                all_results[model] = results
+
+                click.echo(f"✅ {model} tuning completed!")
+                click.echo(f"   📊 Best score: {results['best_score']:.4f}")
+                click.echo(f"   🔧 Best params: {results['best_params']}")
+                click.echo(f"   📁 Results: {results['run_dir']}")
+
+            except Exception as e:
+                click.echo(f"❌ {model} tuning failed: {e}")
+                logger.error(f"Tuning failed for {model}: {e}")
+                continue
+
+        # Summary
+        if all_results:
+            click.echo(f"\n🎉 Tuning completed for {len(all_results)} models!")
+            click.echo("\n📊 Summary:")
+
+            # Sort by score
+            sorted_results = sorted(all_results.items(), key=lambda x: x[1]['best_score'], reverse=True)
+
+            for model, results in sorted_results:
+                click.echo(f"   {model}: {results['best_score']:.4f}")
+
+            # Best overall model
+            best_model, best_results = sorted_results[0]
+            click.echo(f"\n🏆 Best model: {best_model} (score: {best_results['best_score']:.4f})")
+
+            # Save summary
+            summary_path = path_manager.artifacts_dir / f"tuning_summary_{strategy}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            with open(summary_path, "w") as f:
+                summary_data = {
+                    "strategy": strategy,
+                    "timestamp": datetime.now().isoformat(),
+                    "results": {k: {
+                        "best_score": v["best_score"],
+                        "best_params": v["best_params"],
+                        "n_trials": v["n_trials"],
+                        "run_dir": v["run_dir"]
+                    } for k, v in all_results.items()},
+                    "best_model": best_model,
+                    "cv_config": cv_config
+                }
+                json.dump(summary_data, f, indent=2)
+
+            click.echo(f"📄 Summary saved to: {summary_path}")
+        else:
+            click.echo("❌ No models were successfully tuned")
+
+    except ImportError as e:
+        click.echo("❌ Tuning requires 'optuna' package. Install with: pip install optuna")
+        logger.error(f"Import error: {e}")
+    except Exception as e:
+        click.echo(f"❌ Tuning failed: {e}")
+        logger.error(f"Tuning failed: {e}")
+        raise
 
 
 if __name__ == "__main__":

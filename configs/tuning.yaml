@@ -1,0 +1,76 @@
+study:
+  n_trials: 100  # Increased for better optimization
+  pruning: true  # Enable pruning for faster optimization
+  timeout: 3600  # Maximum time in seconds (1 hour)
+
+# Cross-validation settings for tuning
+cv:
+  strategy: "stratified"
+  n_folds: 5
+  shuffle: true
+  random_state: 42
+
+# Optuna study configuration
+optuna:
+  sampler: "TPE"  # Tree-structured Parzen Estimator
+  pruner: "median"  # Median pruner for early stopping
+  direction: "maximize"  # Maximize AUC score
+
+# Model-specific settings
+models:
+  # Enable/disable tuning for specific models
+  logistic:
+    enabled: true
+    priority: 1  # High priority for quick models
+
+  random_forest:
+    enabled: true
+    priority: 2
+
+  gradient_boosting:
+    enabled: true
+    priority: 2
+
+  catboost:
+    enabled: true
+    priority: 3  # Lower priority for slower models
+
+  xgboost:
+    enabled: true
+    priority: 3
+
+  svm:
+    enabled: false  # Can be slow for large datasets
+    priority: 4
+
+  ridge:
+    enabled: true
+    priority: 1
+
+# Tuning strategies
+strategies:
+  quick:
+    n_trials: 25
+    timeout: 300  # 5 minutes
+    models: ["logistic", "ridge"]
+
+  standard:
+    n_trials: 100
+    timeout: 1800  # 30 minutes
+    models: ["logistic", "random_forest", "gradient_boosting"]
+
+  comprehensive:
+    n_trials: 200
+    timeout: 7200  # 2 hours
+    models: ["logistic", "random_forest", "gradient_boosting", "catboost", "xgboost"]
+
+# Advanced options
+advanced:
+  parallel_jobs: 1  # Number of parallel trials (set to CPU cores if needed)
+  storage: null  # SQLite database path for persistent studies
+  load_if_exists: false  # Continue existing study
+
+# Metrics and evaluation
+metrics:
+  primary: "roc_auc"  # Primary metric to optimize
+  secondary: ["accuracy", "precision", "recall", "f1"]  # Additional metrics to track
