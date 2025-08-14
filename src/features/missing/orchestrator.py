@@ -28,7 +28,10 @@ class ImputationOrchestrator:
         self.default_cfg = self.cfg.get("default", {})
         self.per_column = self.cfg.get("per_column", {})
 
-        self.add_missing_indicators: bool = bool(self.default_cfg.get("add_missing_indicators", True))
+        # More selective missing indicator controls
+        self.add_missing_indicators: bool = bool(self.default_cfg.get("add_missing_indicators", False))  # Default to False
+        self.missing_indicator_columns: Optional[List[str]] = self.default_cfg.get("missing_indicator_columns")  # Explicit column list
+        self.missing_indicator_threshold: float = float(self.default_cfg.get("missing_indicator_threshold", 0.05))  # Only add if >5% missing
         self.missing_indicator_prefix: str = str(self.default_cfg.get("missing_indicator_prefix", "__miss_"))
         self.debug: bool = bool(self.default_cfg.get("debug", False))
 
@@ -45,6 +48,7 @@ class ImputationOrchestrator:
         # Schema freeze
         self._fitted_columns: List[str] = []
         self._col_dtypes: Dict[str, Any] = {}
+        self._missing_indicator_cols: List[str] = []  # Track which indicators were actually added
 
     # ---- lifecycle ----
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "ImputationOrchestrator":
@@ -52,6 +56,9 @@ class ImputationOrchestrator:
 
         cols = self._select_columns(X)
         cols = self._apply_order(cols)
+        
+        # Determine which columns should get missing indicators during fit
+        self._determine_missing_indicators(X, cols)
 
         for col in cols:
             plan = self._plan_for(col, X[col])
@@ -81,12 +88,11 @@ class ImputationOrchestrator:
                 f"{missing_cols}"
             )
 
-        # 1) missing indicators (before filling)
-        if self.add_missing_indicators:
-            for col in self._fitted_columns:
-                s = X[col]
-                if s.isna().any():
-                    X[f"{self.missing_indicator_prefix}{col}"] = s.isna().astype(np.int8)
+        # 1) Add missing indicators only for selected columns (before filling)
+        for col in self._missing_indicator_cols:
+            if col in X.columns and X[col].isna().any():
+                indicator_name = f"{self.missing_indicator_prefix}{col}"
+                X[indicator_name] = X[col].isna().astype(np.int8)
 
         # 2) apply strategies in the same order frozen at fit
         for col in self._fitted_columns:
@@ -101,26 +107,26 @@ class ImputationOrchestrator:
                 continue
             X = strat.transform(X)
 
-        # 3) clipping (after all imputations)
+        # 3) clipping (after all imputations) with better dtype handling
         for col, (lo, hi) in self.clipping.items():
-            if (lo is not None or hi is not None) and _is_numeric(X[col]):
-                # cast to float for clip, then restore dtype if safe
+            if (lo is not None or hi is not None) and col in X.columns and _is_numeric(X[col]):
                 original_dtype = self._col_dtypes.get(col, X[col].dtype)
-                X[col] = X[col].astype(float).clip(lower=lo, upper=hi)
-                # best-effort restore type (e.g., float64 -> int64 if integral)
-                try:
-                    if np.issubdtype(original_dtype, np.integer):
-                        # only cast back if values are integral
-                        if np.all(np.modf(X[col].to_numpy())[0] == 0):
-                            X[col] = X[col].astype(original_dtype)
-                    else:
-                        X[col] = X[col].astype(original_dtype)
-                except Exception:
-                    # keep clipped float if restoration fails
-                    pass
+
+                # Only clip if there are no NaN values after imputation
+                if not X[col].isna().any():
+                    X[col] = X[col].astype(float)
+
+                    # Apply clipping
+                    if lo is not None:
+                        X[col] = X[col].clip(lower=lo)
+                    if hi is not None:
+                        X[col] = X[col].clip(upper=hi)
+
+                    # Attempt dtype restoration
+                    self._restore_dtype(X, col, original_dtype)
 
         # 4) sanity: any column in fitted set still has NaNs?
-        still_nan = [c for c in self._fitted_columns if X[c].isna().any()]
+        still_nan = [c for c in self._fitted_columns if c in X.columns and X[c].isna().any()]
         if still_nan:
             raise ValueError(
                 "ImputationOrchestrator.transform: some fitted columns still contain NaNs after imputation: "
@@ -161,3 +167,40 @@ class ImputationOrchestrator:
                 "method": str(self.default_cfg.get("categorical", "constant")).lower(),
                 "fill_value": self.default_cfg.get("fill_value", "Unknown"),
             }
+
+    def _determine_missing_indicators(self, X: pd.DataFrame, cols: List[str]) -> None:
+        """Determine which columns should get missing indicators based on configuration."""
+        if not self.add_missing_indicators:
+            return
+
+        if self.missing_indicator_columns is not None:
+            # Use explicitly specified columns
+            self._missing_indicator_cols = [
+                col for col in self.missing_indicator_columns
+                if col in cols and X[col].isna().any()
+            ]
+        else:
+            # Use threshold-based selection
+            self._missing_indicator_cols = [
+                col for col in cols
+                if X[col].isna().any() and X[col].isna().mean() >= self.missing_indicator_threshold
+            ]
+
+    def _restore_dtype(self, X: pd.DataFrame, col: str, original_dtype) -> None:
+        """Safely restore dtype after clipping operations."""
+        try:
+            if np.issubdtype(original_dtype, np.integer):
+                # Check if all values are actually integers
+                if np.all(np.equal(np.mod(X[col].values, 1), 0)):
+                    X[col] = X[col].astype(original_dtype)
+                else:
+                    # Keep as float if clipping introduced non-integer values
+                    if self.debug:
+                        print(f"Warning: Column '{col}' kept as float after clipping introduced non-integer values")
+            else:
+                # For float dtypes, try to restore but don't fail if it doesn't work
+                X[col] = X[col].astype(original_dtype)
+        except (ValueError, OverflowError) as e:
+            if self.debug:
+                print(f"Warning: Could not restore dtype for column '{col}': {e}")
+            # Keep as float64 if restoration fails

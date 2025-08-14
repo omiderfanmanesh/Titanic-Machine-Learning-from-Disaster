@@ -71,7 +71,7 @@ imputation:
     numeric: median
     categorical: constant
     fill_value: "Unknown"
-    add_missing_indicators: true
+    add_missing_indicators: false
     missing_indicator_prefix: "__miss_"
     debug: true
 
@@ -79,7 +79,7 @@ imputation:
     Age:
       method: model
       estimator: random_forest
-      features: [Pclass, Sex, SibSp, Parch, Fare, Embarked, Title]
+      features: [Pclass, Sex, SibSp, Parch, Fare, Embarked]
       n_estimators: 400
       max_depth: null
       random_state: 42
@@ -103,9 +103,9 @@ imputation:
 feature_engineering:
   pre_impute:
     - FamilySizeTransform      # → FamilySize, IsAlone
-    - TitleTransform           # → Title (uses rare_title_threshold)
+#    - TitleTransform           # → Title (uses rare_title_threshold)
     - DeckTransform            # → Deck (maps missing to 'U')
     - TicketGroupTransform     # → TicketGroupSize (numeric)
   post_impute:
     - FareTransform            # clip>=0, then optional log to Fare_log
-    - AgeBinningTransform      # → AgeBin (numeric)
+#    - AgeBinningTransform      # → AgeBin (numeric)

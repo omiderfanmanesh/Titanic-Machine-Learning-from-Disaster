@@ -33,6 +33,7 @@ kaggle = [
 dev = [
   "pytest>=7.4",
   "pytest-cov>=4.1",
+  "pytest-asyncio>=0.21",
   "black>=23.7",
   "ruff>=0.0.280",
   "mypy>=1.5",
@@ -111,4 +112,4 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 python_files = "test_*.py"
 python_functions = "test_*"
-addopts = "--cov=titanic_ml --cov-report=html --cov-report=term-missing --cov-fail-under=80"
+addopts = "--cov=titanic_ml --cov-report=html --cov-report=term-missing --cov-fail-under=80 -p no:pytest_asyncio"
