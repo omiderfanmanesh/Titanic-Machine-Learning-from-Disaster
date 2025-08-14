@@ -9,9 +9,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional, Type, Union
 
+
+from core import LoggerFactory
 from .based.based_dataset import BasedDataset
 from .titanic import TitanicDataset
-from ktl.utils.logger import LoggerFactory
+
 
 
 class DatasetRegistry:

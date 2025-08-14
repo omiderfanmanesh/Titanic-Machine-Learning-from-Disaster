@@ -68,7 +68,7 @@ imputation:
   exclude: [PassengerId, Name, Ticket, Title, Deck]
 
   default:
-    numeric: median
+    numeric: mean
     categorical: constant
     fill_value: "Unknown"
     add_missing_indicators: false
@@ -103,9 +103,9 @@ imputation:
 feature_engineering:
   pre_impute:
     - FamilySizeTransform      # → FamilySize, IsAlone
-#    - TitleTransform           # → Title (uses rare_title_threshold)
+    - TitleTransform           # → Title (uses rare_title_threshold)
     - DeckTransform            # → Deck (maps missing to 'U')
     - TicketGroupTransform     # → TicketGroupSize (numeric)
   post_impute:
     - FareTransform            # clip>=0, then optional log to Fare_log
-#    - AgeBinningTransform      # → AgeBin (numeric)
+    - AgeBinningTransform      # → AgeBin (numeric)

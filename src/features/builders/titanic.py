@@ -71,6 +71,10 @@ class TitanicFeatureBuilder(ITransformer):
         self.encoder.fit(Xt, y, categorical_cols=cat_cols)
         Xt_enc = self.encoder.transform(Xt)
 
+        # 4.5) Remove original columns that have been transformed/encoded
+        final_columns = self._get_final_columns(Xt_enc)
+        Xt_enc = Xt_enc[final_columns]
+
         # 5) Scaling (+ freeze schema)
         self.scaler.fit(Xt_enc)
         self._fitted_columns = Xt_enc.columns.tolist()
@@ -113,3 +117,51 @@ class TitanicFeatureBuilder(ITransformer):
 
     def get_feature_names(self) -> List[str]:
         return list(self._fitted_columns or self.encoder.feature_names())
+
+    def _get_final_columns(self, Xt: pd.DataFrame) -> List[str]:
+        """
+        Determine which columns should be kept in the final dataset and order them properly.
+        Orders: PassengerId first, then features, then Survived last.
+        """
+        # Get ID and target columns from config
+        id_col = self.config.get("id_column", "PassengerId")
+        target_col = self.config.get("target_column", "Survived")
+
+        # Start with all current columns
+        all_cols = set(Xt.columns)
+
+        # Define original columns that should be removed (they've been transformed)
+        original_cols_to_remove = {
+            "Name", "Age", "SibSp", "Parch", "Ticket", "Fare", "Cabin",
+            "Sex", "Embarked", "Pclass"
+        }
+
+        # Remove original columns from the set
+        final_cols = all_cols - original_cols_to_remove
+
+        # Convert to list and create ordered column list
+        ordered_cols = []
+
+        # 1. Add ID column first (if present)
+        if id_col in final_cols:
+            ordered_cols.append(id_col)
+            final_cols.remove(id_col)
+
+        # 2. Add target column to separate list (will be added last)
+        target_to_add = None
+        if target_col in final_cols:
+            target_to_add = target_col
+            final_cols.remove(target_col)
+
+        # 3. Add all feature columns (sorted for consistency)
+        feature_cols = sorted(list(final_cols))
+        ordered_cols.extend(feature_cols)
+
+        # 4. Add target column last (if present)
+        if target_to_add:
+            ordered_cols.append(target_to_add)
+
+        self.logger.info(f"Column order: {id_col} first, {len(feature_cols)} features, {target_col} last")
+        self.logger.info(f"Removed original columns: {sorted(original_cols_to_remove & all_cols)}")
+
+        return ordered_cols

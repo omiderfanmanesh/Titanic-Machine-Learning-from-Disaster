@@ -16,7 +16,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
-from configs import DATASET_DEFAULTS, PREPROCESSING_DEFAULTS
+from core import LoggerFactory
 from .file_types import FileType, detect_file_type
 from .encoder_enum import EncoderType, get_recommended_encoder
 from .sampling_types import SamplingType, get_recommended_sampling
@@ -61,8 +61,8 @@ class BasedDataset(ABC):
         """
         self.name = name
         self.data_dir = Path(data_dir)
-        self.target_column = target_column or DATASET_DEFAULTS.TARGET_COLUMN
-        self.id_column = id_column or DATASET_DEFAULTS.ID_COLUMN
+        self.target_column = target_column
+        self.id_column = id_column
         
         # Data containers
         self.df_train: Optional[pd.DataFrame] = None
@@ -82,9 +82,8 @@ class BasedDataset(ABC):
         self.config = kwargs
         
         # Initialize logger
-        from ktl.utils.logger import LoggerFactory
         self.logger = LoggerFactory.get_logger(f"dataset.{name}")
-    
+
     @abstractmethod
     def load_data(self) -> None:
         """Load the dataset from files.
@@ -349,7 +348,7 @@ class BasedDataset(ABC):
                 if strategy == "auto":
                     # Automatic strategy based on data type and missing percentage
                     missing_pct = missing_count / len(df)
-                    if missing_pct > DATASET_DEFAULTS.MAX_MISSING_RATIO:
+                    if missing_pct > 0.5:  # Arbitrary threshold for dropping columns
                         col_strategy = "drop_columns"
                     elif df[col].dtype in [np.number]:
                         col_strategy = "fill_median"

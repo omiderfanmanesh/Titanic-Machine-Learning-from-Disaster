@@ -9,12 +9,12 @@ python src/cli.py train --experiment-config configs/experiment.yaml --data-confi
 
 python src/cli.py evaluate --run-dir <run-dir>
 
-python src/cli.py predict --run-dir <run-dir> --inference-config configs/inference.yaml
+python src/cli.py predict --run-dir rtifacts/20250814-164331/ --inference-config configs/inference.yaml
 
 # Save to a custom path instead of inside run-dir
 python src/cli.py submit \
-    --predictions-path artifacts/20250812-184955/predictions.csv \
-    --output-path artifacts/20250812-184955/my_submission.csv
+    --predictions-path artifacts/20250814-164331/predictions.csv \
+    --output-path artifacts/20250814-164331/my_submission.csv
 
 # Submit directly to Kaggle after building
 python src/cli.py submit \

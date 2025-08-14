@@ -46,6 +46,8 @@ from .transformers_enums import (
     get_transformation_pipeline,
 )
 
+from .based_dataset import BasedDataset
+
 __all__ = [
     # File types
     "FileType",
@@ -83,4 +85,7 @@ __all__ = [
     "create_transformer_config",
     "validate_transformer_params",
     "get_transformation_pipeline",
+
+    # Datasets
+    "BasedDataset",
 ]

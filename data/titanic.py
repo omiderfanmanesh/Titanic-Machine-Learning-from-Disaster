@@ -14,7 +14,6 @@ import numpy as np
 import pandas as pd
 
 from .based.based_dataset import BasedDataset
-from configs import DATASET_DEFAULTS
 
 
 class TitanicDataset(BasedDataset):

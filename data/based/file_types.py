@@ -145,7 +145,7 @@ class FileType(Enum):
             self.TXT: {"index": False, "encoding": "utf-8"},
             self.JSON: {"orient": "records", "lines": False},
             self.JSONL: {"orient": "records", "lines": True},
-            self.PARQUET: {"index": False"},
+            self.PARQUET: {"index": False},
             self.FEATHER: {},
             self.PICKLE: {},
             self.EXCEL: {"index": False},
