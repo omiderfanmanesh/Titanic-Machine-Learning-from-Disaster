@@ -146,6 +146,10 @@ class TitanicPredictor(IPredictor):
                 "prediction": y_bin,
             }
         )
+
+        # Apply postprocessing rules
+        result = self._apply_postprocessing(result, config)
+
         self.logger.info(
             f"Generated binary predictions with threshold={threshold:.4f} (n={len(result)})"
         )
@@ -163,19 +167,8 @@ class TitanicPredictor(IPredictor):
 
         self.logger.info(f"Making predictions with {len(models)} models")
 
-        # Collect predictions from all models as probabilities in [0,1]
-        all_predictions: List[np.ndarray] = []
-        for i, model in enumerate(models):
-            try:
-                raw = self._predict_single_model(model, X)
-                proba = self._normalize_scores_to_proba(raw)
-                all_predictions.append(proba)
-                self.logger.debug(
-                    f"Model {i+1} proba range: {proba.min():.3f} - {proba.max():.3f}"
-                )
-            except Exception as e:
-                self.logger.error(f"Model {i+1} prediction failed: {e}")
-                continue
+        # Apply TTA if enabled
+        all_predictions = self._apply_tta(X, models, config)
 
         if not all_predictions:
             raise RuntimeError("All model predictions failed")
@@ -221,7 +214,12 @@ class TitanicPredictor(IPredictor):
         """Ensemble multiple probability vectors."""
         preds = np.vstack([np.asarray(p, dtype=float).ravel() for p in predictions])  # (m, n)
 
-        if method == "average":
+        if method == "single_best":
+            # Return predictions from the first model only (assumes models are ordered by performance)
+            self.logger.info("Using single best model (no ensemble)")
+            return preds[0]
+
+        elif method == "average":
             if weights is not None:
                 weights = np.asarray(weights, dtype=float).ravel()
                 if weights.size != preds.shape[0]:
@@ -248,6 +246,70 @@ class TitanicPredictor(IPredictor):
         else:
             self.logger.warning(f"Unknown ensemble method: {method}; using average.")
             return preds.mean(axis=0)
+
+    def _apply_tta(self, X: pd.DataFrame, models: List[BaseEstimator], config: Dict[str, Any]) -> List[np.ndarray]:
+        """Apply Test-Time Augmentation if enabled."""
+        use_tta = config.get("use_tta", False)
+        if not use_tta:
+            return self._predict_all_models(X, models)
+
+        tta_rounds = config.get("tta_rounds", 5)
+        tta_noise_scale = config.get("tta_noise_scale", 0.01)
+
+        self.logger.info(f"Applying TTA with {tta_rounds} rounds, noise scale {tta_noise_scale}")
+
+        all_tta_predictions = []
+
+        # Original predictions
+        original_preds = self._predict_all_models(X, models)
+        all_tta_predictions.extend(original_preds)
+
+        # TTA rounds with noise
+        numeric_cols = X.select_dtypes(include=[np.number]).columns
+        for round_idx in range(tta_rounds):
+            X_augmented = X.copy()
+            if len(numeric_cols) > 0:
+                noise = np.random.normal(0, tta_noise_scale, size=(len(X), len(numeric_cols)))
+                X_augmented[numeric_cols] += noise
+
+            tta_preds = self._predict_all_models(X_augmented, models)
+            all_tta_predictions.extend(tta_preds)
+
+        return all_tta_predictions
+
+    def _predict_all_models(self, X: pd.DataFrame, models: List[BaseEstimator]) -> List[np.ndarray]:
+        """Get predictions from all models for given input."""
+        predictions = []
+        for i, model in enumerate(models):
+            try:
+                raw = self._predict_single_model(model, X)
+                proba = self._normalize_scores_to_proba(raw)
+                predictions.append(proba)
+            except Exception as e:
+                self.logger.error(f"Model {i+1} prediction failed: {e}")
+                continue
+        return predictions
+
+    def _apply_postprocessing(self, predictions: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
+        """Apply postprocessing rules to predictions."""
+        postproc_config = config.get("postprocessing", {})
+        rules = postproc_config.get("rules", [])
+
+        if not rules:
+            return predictions
+
+        result = predictions.copy()
+
+        for rule in rules:
+            rule_type = rule.get("type")
+            if rule_type == "round_predictions":
+                result["prediction"] = result["prediction"].round().astype(int)
+                result["prediction_proba"] = result["prediction_proba"].round(6)
+                self.logger.info("Applied round_predictions postprocessing")
+            else:
+                self.logger.warning(f"Unknown postprocessing rule: {rule_type}")
+
+        return result
 
 
 class ModelLoader:

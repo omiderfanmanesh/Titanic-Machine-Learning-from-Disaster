@@ -589,9 +589,19 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str],
         click.echo(f"✅ Predictions saved to {pred_path}")
 
         # Report threshold actually used
+        th_cfg = inference_cfg.get("threshold", {}) or {}
         try:
             used_thr = predictor._resolve_threshold(inference_cfg)
             click.echo(f"   📊 Threshold source: {used_src} | value: {used_thr:.4f}")
+
+            # Print threshold details if requested
+            if th_cfg.get("print", False):
+                click.echo(f"   📊 Threshold configuration:")
+                click.echo(f"      Method: {th_cfg.get('method', 'accuracy')}")
+                click.echo(f"      Optimizer: {th_cfg.get('optimizer', False)}")
+                if th_cfg.get('method') == 'cost':
+                    click.echo(f"      Cost FP: {th_cfg.get('cost_fp', 1.0)}")
+                    click.echo(f"      Cost FN: {th_cfg.get('cost_fn', 1.0)}")
         except Exception:
             pass
 
@@ -604,6 +614,16 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str],
         click.echo("   📊 Probability distribution:")
         click.echo(f"      Mean: {dist_proba.mean():.3f} | Std: {dist_proba.std():.3f} | "
                    f"Min: {dist_proba.min():.3f} | Max: {dist_proba.max():.3f}")
+
+        # Report TTA and postprocessing usage
+        if inference_cfg.get("use_tta", False):
+            click.echo(f"   🔄 TTA enabled: {inference_cfg.get('tta_rounds', 5)} rounds, "
+                      f"noise scale: {inference_cfg.get('tta_noise_scale', 0.01)}")
+
+        postproc_rules = inference_cfg.get("postprocessing", {}).get("rules", [])
+        if postproc_rules:
+            rule_types = [rule.get("type") for rule in postproc_rules]
+            click.echo(f"   ⚙️ Postprocessing applied: {', '.join(rule_types)}")
 
     except Exception as e:
         click.echo(f"❌ Prediction failed: {e}")

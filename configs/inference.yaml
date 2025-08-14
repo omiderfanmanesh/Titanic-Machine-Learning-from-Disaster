@@ -1,27 +1,66 @@
-# Inference configuration
-ensemble_method: average
-ensemble_weights: null
+# =============================================================================
+# INFERENCE CONFIGURATION
+# =============================================================================
+# This file controls how trained models make predictions on new data.
+# It configures ensemble methods, thresholding, augmentation, and output formats.
 
-# Test-time augmentation
-use_tta: false
-tta_rounds: 5
-tta_noise_scale: 0.01
+# =============================================================================
+# ENSEMBLE CONFIGURATION
+# =============================================================================
+# How to combine predictions from multiple models (e.g., from cross-validation folds)
+ensemble_method: single_best    # Options: average, rank_average, geometric_mean, median, max, min, single_best
+ensemble_weights: null          # Optional weights for weighted averaging [0.3, 0.4, 0.3] or null for equal weights
 
-# Output configuration
-output_path: artifacts/predictions.csv
-submission_path: artifacts/submission.csv
+# =============================================================================
+# TEST-TIME AUGMENTATION (TTA)
+# =============================================================================
+# Creates multiple slightly modified versions of test data to improve robustness
+use_tta: false                  # Enable/disable test-time augmentation
+tta_rounds: 5                   # Number of augmented versions to create (more = slower but potentially better)
+tta_noise_scale: 0.01           # Amount of noise to add to numeric features (as fraction of std dev)
 
-# Thresholding (generic; no file path here)
+# =============================================================================
+# OUTPUT CONFIGURATION
+# =============================================================================
+# Where to save prediction results
+output_path: artifacts/predictions.csv      # Raw predictions (probabilities + binary predictions)
+submission_path: artifacts/submission.csv   # Kaggle competition format submission file
+
+# =============================================================================
+# THRESHOLD CONFIGURATION
+# =============================================================================
+# Controls how probability predictions are converted to binary (0/1) decisions
 threshold:
-  value: 0.5                # fallback if no file/override is given
-  optimizer: true           # used during EVAL to find thresholds
-  method: accuracy          # f1 | accuracy | youdenj | cost
-  cost_fp: 1.0              # only used if method=cost
-  cost_fn: 1.0
-  report: true
-  print: true
-  report_path: artifacts/threshold_report.csv
+  # Default threshold for probability -> binary conversion
+  value: 0.5                    # Fallback threshold if no optimization is performed
 
+  # Threshold optimization settings (used during evaluation phase)
+  optimizer: true               # Whether to find optimal thresholds during model evaluation
+  method: accuracy              # Metric to optimize: accuracy, f1, youdenj (Youden's J), cost
+
+  # Cost-sensitive optimization (only used when method=cost)
+  cost_fp: 1.0                  # Cost of false positive predictions
+  cost_fn: 1.0                  # Cost of false negative predictions
+
+  # Reporting and output control
+  report: true                  # Generate detailed threshold analysis report
+  print: true                   # Show threshold details in CLI output
+  report_path: artifacts/threshold_report.csv  # Where to save threshold analysis CSV
+
+# =============================================================================
+# POSTPROCESSING RULES
+# =============================================================================
+# Additional processing steps applied after predictions are generated
 postprocessing:
   rules:
-    - type: round_predictions
+    - type: round_predictions   # Round probabilities to 6 decimals, ensure binary predictions are integers
+
+# =============================================================================
+# USAGE NOTES
+# =============================================================================
+# 1. This file is loaded by: `python src/cli.py predict --inference-config inference`
+# 2. CLI options (--threshold, --threshold-file) override these settings
+# 3. The system automatically searches for best_threshold.txt in run directories
+# 4. Threshold optimization happens during evaluation, not prediction
+# 5. Multiple ensemble methods can be tested by changing ensemble_method
+# 6. TTA is experimental - enable carefully as it increases prediction time significantly
