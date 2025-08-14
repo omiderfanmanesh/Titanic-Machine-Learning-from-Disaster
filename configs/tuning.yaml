@@ -66,7 +66,7 @@ strategies:
 
 # Advanced options
 advanced:
-  parallel_jobs: 1  # Number of parallel trials (set to CPU cores if needed)
+  parallel_jobs: 8  # Number of parallel trials (set to CPU cores if needed)
   storage: null  # SQLite database path for persistent studies
   load_if_exists: false  # Continue existing study
 
