@@ -31,6 +31,7 @@ categorical_columns: [Sex, Embarked, Pclass, Deck, Title]
 handle_missing: true
 encode_categorical: true
 scale_features: true
+feature_importance: true
 
 # Only keep the ID as passthrough
 skip_encoding_columns: [PassengerId]
@@ -109,3 +110,33 @@ feature_engineering:
   post_impute:
     - FareTransform            # clip>=0, then optional log to Fare_log
     - AgeBinningTransform      # → AgeBin (numeric)
+
+# =========================
+# FEATURE IMPORTANCE
+# =========================
+feature_importance_config:
+  enabled: true
+  algorithms: ["random_forest", "xgboost", "permutation"]  # Based on models.yaml algorithms
+  output_dir: "artifacts/feature_importance"
+  top_k_features: 20
+  plot_importance: true
+  save_results: true
+  cross_validate: true
+  cv_folds: 5
+  random_state: 42
+
+  # Algorithm-specific parameters
+  algorithm_params:
+    random_forest:
+      n_estimators: 100
+      max_depth: 10
+      random_state: 42
+    xgboost:
+      n_estimators: 100
+      max_depth: 4
+      learning_rate: 0.1
+      random_state: 42
+    permutation:
+      n_repeats: 10
+      random_state: 42
+      scoring: "accuracy"

@@ -11,6 +11,9 @@ from features.encoding.orchestrator import EncodingOrchestrator
 from features.missing.orchestrator import ImputationOrchestrator
 from features.scaling.scaler import ScalingOrchestrator
 
+# Import feature importance modules
+from features.importance import FeatureImportanceCalculator, FeatureImportanceVisualizer
+
 
 class TitanicFeatureBuilder(ITransformer):
     """
@@ -19,6 +22,7 @@ class TitanicFeatureBuilder(ITransformer):
     3) FE (post-impute)  — from config.feature_engineering.post_impute
     4) Encoding          — config.encoding
     5) Scaling
+    6) Feature Importance — optional analysis after preprocessing
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -79,6 +83,20 @@ class TitanicFeatureBuilder(ITransformer):
         self.scaler.fit(Xt_enc)
         self._fitted_columns = Xt_enc.columns.tolist()
 
+        # 6) Calculate feature importance if enabled and target is available
+        feature_importance_enabled = self.config.get("feature_importance", False)
+        target_available = y is not None
+
+        self.logger.info(f"Feature importance check: enabled={feature_importance_enabled}, target_available={target_available}")
+
+        if feature_importance_enabled and target_available:
+            self._calculate_feature_importance(Xt_enc, y)
+        else:
+            if not feature_importance_enabled:
+                self.logger.info("Feature importance disabled in config")
+            if not target_available:
+                self.logger.info("Target variable not available for feature importance")
+
         self._is_fitted = True
         self.logger.info("✅ Feature builder fitted successfully")
         return self
@@ -113,7 +131,11 @@ class TitanicFeatureBuilder(ITransformer):
 
     # -------- helpers --------
     def fit_transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
-        return self.fit(X, y).transform(X)
+        # First do the normal fit and transform
+        result = self.fit(X, y).transform(X)
+
+
+        return result
 
     def get_feature_names(self) -> List[str]:
         return list(self._fitted_columns or self.encoder.feature_names())
@@ -165,3 +187,56 @@ class TitanicFeatureBuilder(ITransformer):
         self.logger.info(f"Removed original columns: {sorted(original_cols_to_remove & all_cols)}")
 
         return ordered_cols
+
+    def _calculate_feature_importance(self, X_processed: pd.DataFrame, y: pd.Series) -> None:
+        """Calculate and visualize feature importance after preprocessing."""
+        try:
+            self.logger.info("🔍 Starting feature importance calculation...")
+
+            # Remove ID and target columns for importance calculation
+            id_col = self.config.get("id_column", "PassengerId")
+            target_col = self.config.get("target_column", "Survived")
+
+            # Get feature columns only (exclude ID and target)
+            feature_cols = [col for col in X_processed.columns
+                          if col not in [id_col, target_col]]
+
+            if not feature_cols:
+                self.logger.warning("No feature columns found for importance calculation")
+                return
+
+            X_features = X_processed[feature_cols]
+
+            self.logger.info(f"Calculating importance for {len(feature_cols)} features")
+
+            # Initialize feature importance calculator
+            importance_calculator = FeatureImportanceCalculator(self.config)
+
+            # Calculate importance scores
+            importance_results = importance_calculator.calculate_importance(X_features, y)
+
+            if importance_results:
+                # Create visualizations
+                visualizer = FeatureImportanceVisualizer(self.config)
+                visualizer.create_all_plots(
+                    importance_results,
+                    importance_calculator.model_scores
+                )
+
+                # Create summary report
+                visualizer.create_summary_report(
+                    importance_results,
+                    importance_calculator.model_scores
+                )
+
+                # Log top features
+                top_features = importance_calculator.get_top_features()
+                self.logger.info(f"Top 10 most important features: {top_features[:10]}")
+
+                self.logger.info("✅ Feature importance analysis completed successfully")
+            else:
+                self.logger.warning("No feature importance results generated")
+
+        except Exception as e:
+            self.logger.error(f"Error in feature importance calculation: {e}")
+            # Don't raise the error - feature importance is optional

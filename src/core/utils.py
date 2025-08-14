@@ -246,6 +246,7 @@ class DataConfig(BaseModel):
     handle_missing: bool
     scale_features: bool
     encode_categorical: bool
+    feature_importance: bool = False  # Add feature importance switch
 
     # ---- Other params used by transforms ----
     log_transform_fare: bool
