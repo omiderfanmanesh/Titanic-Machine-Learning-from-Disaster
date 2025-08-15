@@ -103,6 +103,7 @@ imputation:
 # =========================
 feature_engineering:
   pre_impute:
+    - AgeOutlierTransform      # → AgeBin (numeric)
     - FamilySizeTransform      # → FamilySize, IsAlone
     - TitleTransform           # → Title (uses rare_title_threshold)
     - DeckTransform            # → Deck (maps missing to 'U')
@@ -111,7 +112,7 @@ feature_engineering:
     - FareTransform            # clip>=0, then optional log to Fare_log
     - AgeBinningTransform      # → AgeBin (numeric)
 
-# =========================
+ # =========================
 # FEATURE IMPORTANCE
 # =========================
 feature_importance_config:

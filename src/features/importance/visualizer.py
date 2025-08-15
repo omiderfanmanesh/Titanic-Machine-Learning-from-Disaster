@@ -78,7 +78,7 @@ class FeatureImportanceVisualizer:
         plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
         plt.close()
 
-    def _plot_algorithm_comparison(self, importance_results: Dict[str, pd.DataFrame],
+    def _plot_algorithm_comparison(self, importance_results: Dict[str, pd.DataFrame], 
                                   timestamp: str) -> None:
         """Create comparison plot across algorithms."""
         # Get features that appear in top K for any algorithm
