@@ -4,35 +4,69 @@ import numpy as np
 import pandas as pd
 from typing import Optional
 
-from core.utils import LoggerFactory
 from features.transforms.base import BaseTransform
 
 
 class FareTransform(BaseTransform):
-    """Transforms fare values with log transformation and missing value handling."""
+    """
+    - Replaces Fare == 0 with the mean Fare per Pclass (learned on fit).
+    - Mean can be computed excluding zeros (default) or including them.
+    - Optionally applies log1p transform.
+    """
 
-    def __init__(self, fare_col: str = "Fare", log_transform: bool = False):
+    def __init__(
+        self,
+        fare_col: str = "Fare",
+        class_col: str = "Pclass",
+        log_transform: bool = False,
+        exclude_zero_in_mean: bool = True,
+    ):
         super().__init__()
         self.fare_col = fare_col
+        self.class_col = class_col
         self.log_transform = log_transform
-        self.median_fare: Optional[float] = None
+        self.exclude_zero_in_mean = exclude_zero_in_mean
+        self._means: Optional[pd.Series] = None
 
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "FareTransform":
         if self.fare_col not in X.columns:
             raise ValueError(f"Column {self.fare_col} not found")
+        if self.class_col not in X.columns:
+            raise ValueError(f"Column {self.class_col} not found")
 
-        self.median_fare = X[self.fare_col].median()
-        self.logger.info(f"Learned median fare: {self.median_fare:.2f}")
+        fares = pd.to_numeric(X[self.fare_col], errors="coerce")
+        grp = X[self.class_col]
+
+        if self.exclude_zero_in_mean:
+            mask = fares > 0
+            self._means = fares[mask].groupby(grp[mask]).mean()
+        else:
+            self._means = fares.groupby(grp).mean()
+
         self.is_fitted = True
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        if not self.is_fitted:
-            raise ValueError("Transform must be fitted before calling transform")
-
+        self._require_fitted()
         X = X.copy()
-        X[self.fare_col] = X[self.fare_col].fillna(self.median_fare)
-        if self.log_transform:
-            X[f"{self.fare_col}_log"] = np.log1p(X[self.fare_col])
-        return X
+        if self._means is None:
+            return X
 
+        fares = pd.to_numeric(X[self.fare_col], errors="coerce")
+        classes = X[self.class_col]
+
+        # Replace Fare == 0 with class mean (vectorized)
+        mask = (fares == 0) & (classes.isin(self._means.index))
+        X.loc[mask, self.fare_col] = classes[mask].map(self._means)
+
+        # Optional log1p
+        if self.log_transform:
+            fares = pd.to_numeric(X[self.fare_col], errors="coerce")
+
+            # Guard against negatives (clip at 0 for stability)
+            if (fares < 0).any():
+                fares = fares.clip(lower=0)
+
+            X[self.fare_col] = np.log1p(fares)
+
+        return X

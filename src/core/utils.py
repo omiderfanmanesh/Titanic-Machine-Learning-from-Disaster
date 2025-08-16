@@ -271,6 +271,11 @@ class DataConfig(BaseModel):
     # Include original raw columns (preprocessed sources) in final dataset
     add_original_columns: bool = Field(False, description="Keep original raw columns alongside engineered ones")
 
+    # ---- Training feature selection ----
+    # If provided, training (and prediction) will use exactly these columns
+    # (after removing id/target). Missing columns are ignored with a warning.
+    train_columns: Optional[List[str]] = None
+
     # ---------- Convenience helpers ----------
     def pre_impute_transforms(self) -> List[str]:
         """List of transform class names to run before imputation."""

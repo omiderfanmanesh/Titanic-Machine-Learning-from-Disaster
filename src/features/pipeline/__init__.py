@@ -8,7 +8,6 @@ from features.transforms import (
     AgeBinningTransform,
 )
 from features.transforms.ticket_parse import TicketParseTransform
-from features.transforms.fare_zero_by_class import FareZeroByClassMeanTransform
 
 TRANSFORM_MAP = {
     "FamilySizeTransform": FamilySizeTransform,
@@ -18,7 +17,6 @@ TRANSFORM_MAP = {
     "FareTransform": FareTransform,
     "AgeBinningTransform": AgeBinningTransform,
     "TicketParseTransform": TicketParseTransform,
-    "FareZeroByClassMeanTransform": FareZeroByClassMeanTransform,
 }
 
 def _is_enabled(name: str, config: dict) -> bool:

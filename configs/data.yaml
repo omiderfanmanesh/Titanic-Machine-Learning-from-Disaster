@@ -28,13 +28,21 @@ categorical_columns: [Sex, Embarked, Pclass, Deck, Title, Ticket_prefix, IsAlone
 # =========================
 # GLOBAL SWITCHES
 # =========================
-handle_missing: false
-encode_categorical: false
-scale_features: false
-feature_importance: false
+handle_missing: true
+encode_categorical: true
+scale_features: true
+feature_importance: true
 
 # Include original raw columns in final dataset (alongside engineered/encoded)
-add_original_columns: true
+add_original_columns: false
+
+# Explicit feature list used for training and prediction
+train_columns:
+  - AgeBin
+  - FamilySize
+  - IsAlone
+  - TicketGroupSize
+  - Ticket_number
 
 # Only keep the ID as passthrough
 skip_encoding_columns: [PassengerId]
@@ -69,7 +77,7 @@ encoding:
     handle_unknown: "ignore"
   per_column:
     Title:
-      method: label            # simple, no extra dependency
+      method: onehot            # simple, no extra dependency
     Deck:
       method: ordinal           # safe, low-cardinality one-hot
     Embarked:
@@ -96,19 +104,19 @@ imputation:
     debug: true
 
   per_column:
-    Age:
-      method: model
-      estimator: random_forest
-      features: [Pclass, Sex, SibSp, Parch, Fare, Embarked]
-      n_estimators: 400
-      max_depth: null
-      random_state: 42
-      clip_min: 0
-      clip_max: 80
-
-    Fare:
-      method: mean
-      clip_min: 0
+#    Age:
+#      method: model
+#      estimator: random_forest
+#      features: [Pclass, Sex, SibSp, Parch, Fare, Embarked]
+#      n_estimators: 400
+#      max_depth: null
+#      random_state: 42
+#      clip_min: 0
+#      clip_max: 80
+#
+#    Fare:
+#      method: mean
+#      clip_min: 0
 
     Embarked:
       method: constant
@@ -127,9 +135,8 @@ feature_engineering:
     - TicketParseTransform     # → Ticket_prefix, Ticket_number
     - DeckTransform            # → Deck (maps missing to 'U')
     - TicketGroupTransform     # → TicketGroupSize (numeric)
-    - FareZeroByClassMeanTransform  # fix Fare==0 using class mean
   post_impute:
-    - FareTransform            # clip>=0, then optional log to Fare_log
+    - FareTransform            # fix Fare==0 using class mean  then optional log to Fare_log
     - AgeBinningTransform      # → AgeBin (numeric)
 
 # Enable/disable individual transforms by class name
@@ -139,7 +146,6 @@ feature_toggles:
   TicketParseTransform: true
   DeckTransform: true
   TicketGroupTransform: true
-  FareZeroByClassMeanTransform: true
   FareTransform: true
   AgeBinningTransform: true
 

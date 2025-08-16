@@ -292,15 +292,31 @@ def train(experiment_config: str, data_config: str):
             click.echo(f"🐛 Debug mode: Using {len(train_df)} training samples")
 
         # Prepare data
-        # Drop target and ID column for modeling
+        # Drop target and ID columns for modeling
         drop_for_training = [data_cfg.target_column]
         if data_cfg.id_column in train_df.columns:
             drop_for_training.append(data_cfg.id_column)
-        X = train_df.drop(columns=drop_for_training)
-        # Drop raw text / identifier columns not yet encoded if present
-        drop_cols = [c for c in ['Name', 'Ticket', 'Cabin'] if c in X.columns]
-        if drop_cols:
-            X = X.drop(columns=drop_cols)
+
+        selected_cols: list[str] = []
+        # If train_columns is provided in data config, honor it
+        if getattr(data_cfg, 'train_columns', None):
+            requested = list(data_cfg.train_columns or [])
+            selected_cols = [c for c in requested if c not in drop_for_training and c in train_df.columns]
+            missing = [c for c in requested if c not in train_df.columns]
+            if missing:
+                click.echo(f"⚠️ Some requested training columns not found and will be ignored: {missing}")
+
+        if selected_cols:
+            X = train_df[selected_cols].copy()
+        else:
+            X = train_df.drop(columns=drop_for_training)
+            # Drop raw text / identifier columns not yet encoded if present
+            drop_cols = [c for c in ['Name', 'Ticket', 'Cabin'] if c in X.columns]
+            if drop_cols:
+                X = X.drop(columns=drop_cols)
+        # Fallback safety: keep only numeric/bool columns (avoids raw objects when originals are kept)
+        X = X.select_dtypes(include=["number", "bool"]) 
+
         y = train_df[data_cfg.target_column]
 
         # Create model
@@ -579,11 +595,35 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str],
         test_df = pd.read_csv(test_path)
         click.echo(f"📥 Loaded test data: {test_df.shape}")
 
-        # Prepare model input
-        drop_cols = [c for c in ["Name", "Ticket", "Cabin"] if c in test_df.columns]
-        test_model_df = test_df.drop(columns=drop_cols) if drop_cols else test_df.copy()
+        # Prepare model input (use training column selection if configured)
+        test_model_df = test_df.copy()
+        try:
+            data_config_dict = config_manager.load_config("data")
+            data_cfg = DataConfig(**data_config_dict)
+        except Exception:
+            data_cfg = None
+
+        if data_cfg and getattr(data_cfg, 'train_columns', None):
+            requested = list(data_cfg.train_columns or [])
+            keep_cols = [c for c in requested if c in test_model_df.columns]
+            missing = [c for c in requested if c not in test_model_df.columns]
+            if missing:
+                click.echo(f"⚠️ Some train_columns missing in test data and will be ignored: {missing}")
+            if keep_cols:
+                test_model_df = test_model_df[keep_cols]
+            else:
+                drop_cols = [c for c in ["Name", "Ticket", "Cabin"] if c in test_model_df.columns]
+                if drop_cols:
+                    test_model_df = test_model_df.drop(columns=drop_cols)
+        else:
+            drop_cols = [c for c in ["Name", "Ticket", "Cabin"] if c in test_model_df.columns]
+            if drop_cols:
+                test_model_df = test_model_df.drop(columns=drop_cols)
+
         if "PassengerId" in test_model_df.columns:
             test_model_df = test_model_df.set_index("PassengerId")
+        # Fallback safety: keep only numeric/bool feature columns
+        test_model_df = test_model_df.select_dtypes(include=["number", "bool"]) 
 
         # Load models
         model_loader = ModelLoader()
