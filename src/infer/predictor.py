@@ -254,6 +254,7 @@ class TitanicPredictor(IPredictor):
             return self._predict_all_models(X, models)
 
         tta_rounds = config.get("tta_rounds", 5)
+        tta_noise_scale = float(config.get("tta_noise_scale", 0.01))
         tta_noise_scale = config.get("tta_noise_scale", 0.01)
 
         self.logger.info(f"Applying TTA with {tta_rounds} rounds, noise scale {tta_noise_scale}")

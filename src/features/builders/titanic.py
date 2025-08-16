@@ -39,7 +39,7 @@ class TitanicFeatureBuilder(ITransformer):
         self.handle_missing = bool(self.config.get("handle_missing", True))
         self.imputer = ImputationOrchestrator(self.config) if self.handle_missing else None
 
-        self.scaler = ScalingOrchestrator(enable=self.config.get("scale_features", True))
+        self.scaler = ScalingOrchestrator(enable=self.config.get("scale_features", True), config=self.config)
 
         self._is_fitted = False
         self._fitted_columns: Optional[List[str]] = None  # frozen post-encoding schema
@@ -152,14 +152,19 @@ class TitanicFeatureBuilder(ITransformer):
         # Start with all current columns
         all_cols = set(Xt.columns)
 
-        # Define original columns that should be removed (they've been transformed)
-        original_cols_to_remove = {
-            "Name", "Age", "SibSp", "Parch", "Ticket", "Fare", "Cabin",
-            "Sex", "Embarked", "Pclass"
-        }
+        # Decide whether to include original columns
+        keep_original = bool(self.config.get("add_original_columns", self.config.get("add_original_column", False)))
 
-        # Remove original columns from the set
-        final_cols = all_cols - original_cols_to_remove
+        if keep_original:
+            final_cols = set(all_cols)  # keep everything for ordering, we'll pop id/target below
+        else:
+            # Define original columns that should be removed (they've been transformed)
+            original_cols_to_remove = {
+                "Name", "Age", "SibSp", "Parch", "Ticket", "Fare", "Cabin",
+                "Sex", "Embarked", "Pclass"
+            }
+            # Remove original columns from the set
+            final_cols = all_cols - original_cols_to_remove
 
         # Convert to list and create ordered column list
         ordered_cols = []
@@ -184,7 +189,14 @@ class TitanicFeatureBuilder(ITransformer):
             ordered_cols.append(target_to_add)
 
         self.logger.info(f"Column order: {id_col} first, {len(feature_cols)} features, {target_col} last")
-        self.logger.info(f"Removed original columns: {sorted(original_cols_to_remove & all_cols)}")
+        try:
+            if not keep_original:
+                removed = {"Name", "Age", "SibSp", "Parch", "Ticket", "Fare", "Cabin", "Sex", "Embarked", "Pclass"} & all_cols
+                self.logger.info(f"Removed original columns: {sorted(removed)}")
+            else:
+                self.logger.info("Kept original raw columns as requested (add_original_columns=True)")
+        except Exception:
+            pass
 
         return ordered_cols
 

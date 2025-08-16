@@ -1,7 +1,7 @@
 from typing import Dict, Any, Optional, List
 import pandas as pd
 from .factory import build_encoder
-from src.core import IEncoderStrategy
+from core import IEncoderStrategy
 
 class EncodingOrchestrator:
     def __init__(self, config: Dict[str, Any]):
@@ -37,11 +37,13 @@ class EncodingOrchestrator:
         if not self._encoders:
             return X
         Xo = X.copy()
+        keep_original = bool(self.config.get("add_original_columns", self.config.get("add_original_column", False)))
         for col, enc in self._encoders.items():
             if col not in Xo.columns:
                 continue
             enc_df = enc.transform(Xo)
-            Xo.drop(columns=[col], inplace=True)
+            if not keep_original:
+                Xo.drop(columns=[col], inplace=True)
             Xo = pd.concat([Xo, enc_df], axis=1)
         return Xo
 
@@ -50,4 +52,3 @@ class EncodingOrchestrator:
         for enc in self._encoders.values():
             names.extend(enc.output_columns())
         return names
-

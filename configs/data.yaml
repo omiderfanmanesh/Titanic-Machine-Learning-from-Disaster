@@ -22,24 +22,42 @@ required_columns:
   - Embarked
 
 # What we want the model to treat as numeric/categorical (post-FE)
-numeric_columns: [Age, SibSp, Parch, Fare]
-categorical_columns: [Sex, Embarked, Pclass, Deck, Title]
+numeric_columns: [Age, SibSp, Parch, Fare, Ticket_number, TicketGroupSize, FamilySize]
+categorical_columns: [Sex, Embarked, Pclass, Deck, Title, Ticket_prefix, IsAlone, AgeBin]
 
 # =========================
 # GLOBAL SWITCHES
 # =========================
-handle_missing: true
-encode_categorical: true
-scale_features: true
-feature_importance: true
+handle_missing: false
+encode_categorical: false
+scale_features: false
+feature_importance: false
+
+# Include original raw columns in final dataset (alongside engineered/encoded)
+add_original_columns: true
 
 # Only keep the ID as passthrough
 skip_encoding_columns: [PassengerId]
 
 # Params used by transforms
-log_transform_fare: true
+log_transform_fare: false
 age_bins: 5
-rare_title_threshold: 10
+rare_title_threshold: null
+# Optional explicit overrides for title normalization
+title_map_override:
+  Lady: Rare
+  Countess: Rare
+  Capt: Rare
+  Col: Rare
+  Don: Rare
+  Dr: Rare
+  Major: Rare
+  Rev: Rare
+  Sir: Rare
+  Jonkheer: Rare
+  Mlle: Miss
+  Ms: Miss
+  Mme: Mrs
 
 # =========================
 # ENCODING
@@ -51,12 +69,13 @@ encoding:
     handle_unknown: "ignore"
   per_column:
     Title:
-      method: catboost         # numeric target encoding → 1 column
-      a: 1.0
+      method: label            # simple, no extra dependency
     Deck:
-      method: onehot           # safe, low-cardinality one-hot
+      method: ordinal           # safe, low-cardinality one-hot
     Embarked:
       method: onehot           # S/C/Q one-hot (clearer than single WOE col)
+    AgeBin:
+      method: ordinal          # treat as ordered categories
 
 # =========================
 # IMPUTATION
@@ -66,7 +85,7 @@ imputation:
   order: [Fare, Age]
 
   # Skip ID/text/engineered categoricals; we don't need to fill them
-  exclude: [PassengerId, Name, Ticket, Title, Deck]
+  exclude: [PassengerId, Name, Ticket, Title, Deck, Surname, Title_First_Middle, Title_Raw, First_Middle, MaidenName, Ticket_prefix]
 
   default:
     numeric: mean
@@ -103,14 +122,26 @@ imputation:
 # =========================
 feature_engineering:
   pre_impute:
-    - AgeOutlierTransform      # → AgeBin (numeric)
+    - TitleTransform           # → Title + name-derived fields
     - FamilySizeTransform      # → FamilySize, IsAlone
-    - TitleTransform           # → Title (uses rare_title_threshold)
+    - TicketParseTransform     # → Ticket_prefix, Ticket_number
     - DeckTransform            # → Deck (maps missing to 'U')
     - TicketGroupTransform     # → TicketGroupSize (numeric)
+    - FareZeroByClassMeanTransform  # fix Fare==0 using class mean
   post_impute:
     - FareTransform            # clip>=0, then optional log to Fare_log
     - AgeBinningTransform      # → AgeBin (numeric)
+
+# Enable/disable individual transforms by class name
+feature_toggles:
+  TitleTransform: true
+  FamilySizeTransform: true
+  TicketParseTransform: true
+  DeckTransform: true
+  TicketGroupTransform: true
+  FareZeroByClassMeanTransform: true
+  FareTransform: true
+  AgeBinningTransform: true
 
  # =========================
 # FEATURE IMPORTANCE

@@ -32,16 +32,21 @@ class ScalingOrchestrator:
 
         # Add explicit exclusions
         exclude_cols.update(self.exclude_patterns)
+        # Exclude known categorical columns from config if provided
+        cat_cols = set(self.config.get("categorical_columns", []) or [])
+        exclude_cols.update(cat_cols)
 
         # Add low-cardinality columns if configured
         if self.exclude_binary:
-            for col in numeric_cols:
-                if col in X.columns:
-                    unique_count = X[col].nunique()
-                    if unique_count < self.min_unique_threshold:
+            # Compute unique counts vectorized for stability
+            present_numeric = [c for c in numeric_cols if c in X.columns]
+            if present_numeric:
+                uniq_series = X[present_numeric].nunique()
+                for col, unique_count in uniq_series.items():
+                    if int(unique_count) < int(self.min_unique_threshold):
                         exclude_cols.add(col)
                         if self.debug:
-                            print(f"Excluding '{col}' from scaling (only {unique_count} unique values)")
+                            print(f"Excluding '{col}' from scaling (only {int(unique_count)} unique values)")
 
         # Final list of columns to scale
         self.scale_cols = [c for c in numeric_cols if c not in exclude_cols and c in X.columns]
@@ -52,7 +57,7 @@ class ScalingOrchestrator:
 
         # Store original dtypes for restoration
         if self.restore_dtypes:
-            self.original_dtypes = {col: X[col].dtype for col in self.scale_cols}
+            self.original_dtypes = {col: X.dtypes[col] for col in self.scale_cols if col in X.columns}
 
         # Fit scaler
         if self.scale_cols:

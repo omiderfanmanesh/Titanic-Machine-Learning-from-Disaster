@@ -8,7 +8,7 @@ from .strategies import (
     LeaveOneOutStrategy,
     WOEStrategy,
 )
-from src.core import IEncoderStrategy
+from core import IEncoderStrategy
 
 def build_encoder(col: str, cfg: Dict[str, Any]) -> IEncoderStrategy:
     method = (cfg.get("method") or "onehot").lower()

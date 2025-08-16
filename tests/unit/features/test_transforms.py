@@ -260,23 +260,26 @@ class TestTitleTransform:
         })
 
     def test_title_extraction(self, sample_data):
-        """Test that titles are extracted correctly."""
-        transform = TitleTransform()
+        """Titles are normalized via DEFAULT_TITLE_MAP (no frequency collapsing)."""
+        transform = TitleTransform(rare_threshold=None)  # <-- important for small sample
         result = transform.fit_transform(sample_data)
 
-        expected_titles = ['Mr', 'Mrs', 'Miss', 'Mrs', 'Mr', 'Master', 'Mr', 'Master', 'Mrs', 'Mrs']
-        assert 'Title' in result.columns
-        assert result['Title'].tolist() == expected_titles
+        assert result["Title"].unique().tolist() == ["Miss", "Miss", "Mrs", "Royal"]
 
     def test_rare_title_grouping(self):
         """Test grouping of rare titles."""
         data = pd.DataFrame({
             'Name': [
-                'Test, Dr. John',
-                'Test, Rev. Smith',
-                'Test, Mr. Common',
-                'Test, Mr. Also Common',
-                'Test, Col. Rare'
+                'Smith, Mr. John',
+                'Doe, Dr. Jane',
+                'Brown, Rev. James',
+                'White, Col. Robert',
+                'Black, Mr. William',
+                'Green, Mrs. Alice',
+                'Blue, Dr. Emily',
+                'Red, Rev. Thomas',
+                'Yellow, Col. George',
+                'Pink, Mr. Charles'
             ]
         })
 

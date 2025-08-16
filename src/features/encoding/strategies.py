@@ -1,10 +1,13 @@
 from typing import Optional, List, Dict, Any
 import pandas as pd
 import numpy as np
-import category_encoders as ce
+try:
+    import category_encoders as ce  # optional dependency
+except Exception:  # pragma: no cover - runtime optional
+    ce = None  # type: ignore
 from sklearn.preprocessing import LabelEncoder
 
-from src.core import IEncoderStrategy
+from core import IEncoderStrategy
 
 _MISSING = "__MISSING__"
 
@@ -14,17 +17,35 @@ def _as_string_frame(X: pd.DataFrame, col: str) -> pd.DataFrame:
 class OneHotStrategy(IEncoderStrategy):
     def __init__(self, col: str, **kwargs: Any):
         self.col = col
-        self.enc = ce.OneHotEncoder(cols=[col], return_df=True, **kwargs)
         self._cols_out: List[str] = []
+        self._use_ce = ce is not None
+        if self._use_ce:
+            self.enc = ce.OneHotEncoder(cols=[col], return_df=True, **kwargs)
+        else:
+            self._categories: List[str] = []
 
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
         Xc = _as_string_frame(X, self.col)
-        self.enc.fit(Xc, y)
-        self._cols_out = self.enc.transform(Xc.iloc[:1]).columns.tolist()
+        if self._use_ce:
+            self.enc.fit(Xc, y)
+            self._cols_out = self.enc.transform(Xc.iloc[:1]).columns.tolist()
+        else:
+            cats = pd.Index(Xc[self.col].astype("string").fillna(_MISSING).unique()).tolist()
+            self._categories = [str(c) for c in cats]
+            self._cols_out = [f"{self.col}_{c}" for c in self._categories]
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        return self.enc.transform(_as_string_frame(X, self.col))
+        Xc = _as_string_frame(X, self.col)
+        if self._use_ce:
+            return self.enc.transform(Xc)
+        # pandas get_dummies fallback with fixed columns
+        dummies = pd.get_dummies(Xc[self.col].astype("string").fillna(_MISSING), prefix=self.col)
+        # Ensure all expected columns exist
+        for c in self._cols_out:
+            if c not in dummies.columns:
+                dummies[c] = 0
+        return dummies[self._cols_out].astype(int)
 
     def output_columns(self) -> List[str]:
         return self._cols_out
@@ -32,27 +53,48 @@ class OneHotStrategy(IEncoderStrategy):
 class OrdinalStrategy(IEncoderStrategy):
     def __init__(self, col: str, mapping=None, **_):
         self.col = col
-        self.enc = ce.OrdinalEncoder(
-            cols=[col],
-            mapping=mapping,
-            handle_missing="return_nan",
-            handle_unknown="value",
-            return_df=True
-        )
+        self._use_ce = ce is not None
         self._cols_out = [col]
+        self._mapping = mapping
+        if self._use_ce:
+            self.enc = ce.OrdinalEncoder(
+                cols=[col],
+                mapping=mapping,
+                handle_missing="return_nan",
+                handle_unknown="value",
+                return_df=True
+            )
+        else:
+            self._internal_map: Dict[str, int] = {}
 
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
-        self.enc.fit(_as_string_frame(X, self.col), y)
+        Xc = _as_string_frame(X, self.col)
+        if self._use_ce:
+            self.enc.fit(Xc, y)
+        else:
+            if self._mapping is not None:
+                # convert ce-style mapping into dict
+                mp = self._mapping[0]["mapping"] if isinstance(self._mapping, list) else self._mapping
+                self._internal_map = {str(k): int(v) for k, v in mp.items()}
+            else:
+                cats = pd.Index(Xc[self.col].astype("string").fillna(_MISSING).unique()).tolist()
+                self._internal_map = {str(v): i for i, v in enumerate(cats)}
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        return self.enc.transform(_as_string_frame(X, self.col))
+        Xc = _as_string_frame(X, self.col)
+        if self._use_ce:
+            return self.enc.transform(Xc)
+        s = Xc[self.col].astype("string").fillna(_MISSING).map(lambda v: self._internal_map.get(str(v), -1))
+        return pd.DataFrame({self.col: s.astype(int)}, index=X.index)
 
     def output_columns(self) -> List[str]:
         return self._cols_out
 
 class TargetStrategy(IEncoderStrategy):
     def __init__(self, col: str, **kwargs: Any):
+        if ce is None:
+            raise ImportError("category_encoders is required for TargetStrategy. Install with: pip install category-encoders")
         self.col = col
         self.enc = ce.TargetEncoder(cols=[col], return_df=True, **kwargs)
         self._cols_out = [col]
@@ -103,6 +145,8 @@ class CatBoostStrategy(IEncoderStrategy):
     Useful when you want target-based signal but less leakage than plain mean encoding.
     """
     def __init__(self, col: str, **kwargs: Any):
+        if ce is None:
+            raise ImportError("category_encoders is required for CatBoostStrategy. Install with: pip install category-encoders")
         self.col = col
         # 'a' is a smoothing parameter in ce.CatBoostEncoder
         self.enc = ce.CatBoostEncoder(cols=[col], return_df=True, **kwargs)
@@ -127,6 +171,8 @@ class LeaveOneOutStrategy(IEncoderStrategy):
     of the category computed on all *other* rows. Reduces leakage vs plain mean.
     """
     def __init__(self, col: str, **kwargs: Any):
+        if ce is None:
+            raise ImportError("category_encoders is required for LeaveOneOutStrategy. Install with: pip install category-encoders")
         self.col = col
         # 'sigma' controls Gaussian noise added during training (regularization)
         self.enc = ce.LeaveOneOutEncoder(cols=[col], return_df=True, **kwargs)
@@ -151,6 +197,8 @@ class WOEStrategy(IEncoderStrategy):
     Encodes each category with log((pos_rate)/(neg_rate)).
     """
     def __init__(self, col: str, **kwargs: Any):
+        if ce is None:
+            raise ImportError("category_encoders is required for WOEStrategy. Install with: pip install category-encoders")
         self.col = col
         self.enc = ce.WOEEncoder(cols=[col], return_df=True, **kwargs)
         self._cols_out = [col]

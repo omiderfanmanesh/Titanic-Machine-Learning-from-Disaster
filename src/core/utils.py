@@ -82,18 +82,13 @@ class PathManager:
     """Manages project paths and directory creation."""
     
     def __init__(self, project_root: Optional[Path] = None):
+        # Resolve project root: use provided path or infer from this file location
         if project_root is None:
-            # Find project root by looking for pyproject.toml
-            current = Path.cwd()
-            while current != current.parent:
-                if (current / "pyproject.toml").exists():
-                    project_root = current
-                    break
-                current = current.parent
-            else:
-                project_root = Path.cwd()
-        
-        self.project_root = Path(project_root)
+            # utils.py -> core -> src -> project root
+            inferred = Path(__file__).resolve().parents[2]
+            self.project_root = inferred
+        else:
+            self.project_root = Path(project_root)
         self.data_dir = self.project_root / "data"
         self.config_dir = self.project_root / "configs"
         self.artifacts_dir = self.project_root / "artifacts"
@@ -252,6 +247,7 @@ class DataConfig(BaseModel):
     log_transform_fare: bool
     age_bins: int
     rare_title_threshold: Optional[int]
+    title_map_override: Optional[Dict[str, str]] = None
     skip_encoding_columns: List[str]
 
     # ---- Encoding ----
@@ -262,6 +258,18 @@ class DataConfig(BaseModel):
 
     # ---- Feature engineering stages ----
     feature_engineering: Dict[str, List[str]]
+
+    # ---- Feature toggles (per-transform) ----
+    # Use transform class names as keys, boolean to enable/disable.
+    # Example:
+    #   feature_toggles:
+    #     TitleTransform: true
+    #     TicketParseTransform: false
+    feature_toggles: Dict[str, bool] = Field(default_factory=dict)
+
+    # ---- Output controls ----
+    # Include original raw columns (preprocessed sources) in final dataset
+    add_original_columns: bool = Field(False, description="Keep original raw columns alongside engineered ones")
 
     # ---------- Convenience helpers ----------
     def pre_impute_transforms(self) -> List[str]:

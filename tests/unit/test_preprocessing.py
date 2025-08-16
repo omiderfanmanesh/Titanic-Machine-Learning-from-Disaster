@@ -6,18 +6,16 @@ import pandas as pd
 
 
 class MyTestCase(unittest.TestCase):
-    def extract_title(name: str) -> str:
-        m = re.search(r',\s*([^\.]+)\.', str(name))
-        return m.group(1).strip() if m else 'Unknown'
 
     def do_preprocessing(self, df: pd.DataFrame) -> pd.DataFrame:
-        df['Title'] = df['Name'].map(self.extract_title)
-        title_map = {
-            'Mlle': 'Miss', 'Ms': 'Miss', 'Mme': 'Mrs',
-            'Lady': 'Royal', 'Countess': 'Royal', 'Dona': 'Royal', 'Sir': 'Royal', 'Don': 'Royal',
-            'Jonkheer': 'Rare', 'Capt': 'Rare', 'Col': 'Rare', 'Dr': 'Rare', 'Major': 'Rare', 'Rev': 'Rare'
-        }
-        df['Title'] = df['Title'].replace(title_map)
+        df['Title'] = df['Name'].str.extract(r' ([A-Za-z]+)\. ', expand=False)
+        df['Title'] = df['Title'].replace(
+            ['Lady', 'Countess', 'Capt', 'Col', 'Don', 'Dr', 'Major', 'Rev', 'Sir', 'Jonkheer'], 'Rare')
+
+        df['Title'] = df['Title'].replace(['Mlle', 'Ms'], 'Miss')
+        df['Title'] = df['Title'].replace('Mme', 'Mrs')
+        df['Title'] = df['Title'].fillna('Unknown')
+
         df['Surname'] = df['Name'].str.split(',').str[0]
         df['Title_First_Middle'] = df['Name'].str.split(',').str[1].str.strip()
         df['Title_Raw'] = df['Title_First_Middle'].str.split(' ').str[0]
@@ -28,7 +26,12 @@ class MyTestCase(unittest.TestCase):
         df['Title_Raw'] = df['Title_Raw'].str.replace('.', '', regex=False).str.strip()  # clean raw title
         df['First_Middle'] = df['First_Middle'].str.strip()  # remove leading and
         df['MaidenName'] = df['Name'].str.extract(r'\((.*?)\)')
-        df['ZeroFare'] = (df['Fare'] == 0).astype(int)
+
+        # replace values of Fare = 0 with the mean of Fare based on the 'Pclass' column
+        fare_mean_by_pclass = df.groupby('Pclass')['Fare'].mean()
+        df['Fare'] = df.apply(lambda row: fare_mean_by_pclass[row['Pclass']] if row['Fare'] == 0 else row['Fare'],
+                                  axis=1)
+
         # Extract Ticket prefix
         df['Ticket_prefix'] = (
             df['Ticket']
@@ -99,14 +102,19 @@ class MyTestCase(unittest.TestCase):
         # Import necessary libraries
 
         # Load the dfset
-        df_train = pd.read_csv('../data/raw/train.csv')
-        df_test = pd.read_csv('../data/raw/test.csv')
+        df_train = pd.read_csv('/Users/omiderfanmanesh/Projects/Kaggle/Titanic-Machine-Learning-from-Disaster/data/raw/train.csv')
+        df_test = pd.read_csv('/Users/omiderfanmanesh/Projects/Kaggle/Titanic-Machine-Learning-from-Disaster/data/raw/test.csv')
 
         df_train_new = self.do_preprocessing(df_train)
         df_test_new = self.do_preprocessing(df_test)
 
-        df_train_new_no_missing_values = self.do_fill_missing(df_train_new)
-        df_test_new_no_missing_values = self.do_fill_missing(df_test_new)
+        df_train_new.to_csv('./data/processed/train_preprocessed.csv', index=False)
+        df_test_new.to_csv('./data/processed/test_preprocessed.csv', index=False)
+
+        # print(df_test_new)
+
+        # df_train_new_no_missing_values = self.do_fill_missing(df_train_new)
+        # df_test_new_no_missing_values = self.do_fill_missing(df_test_new)
 
 
 
