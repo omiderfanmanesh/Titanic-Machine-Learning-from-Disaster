@@ -59,6 +59,112 @@ def cli(config_dir: Optional[str], debug: bool):
 
 
 @cli.command()
+def diagnose():
+    """Diagnose environment, data availability, and config toggles."""
+    try:
+        import importlib
+        from pathlib import Path
+
+        click.echo("🩺 Environment & Pipeline Diagnosis")
+
+        # Optional dependencies
+        for mod in ["category_encoders", "xgboost", "lightgbm"]:
+            try:
+                importlib.import_module(mod)
+                click.echo(f"   ✅ {mod} installed")
+            except Exception:
+                click.echo(f"   ⚠️  {mod} NOT installed")
+
+        # Data paths
+        train_raw = path_manager.data_dir / "raw" / "train.csv"
+        test_raw = path_manager.data_dir / "raw" / "test.csv"
+        click.echo(f"   📄 Train raw: {'OK' if train_raw.exists() else 'MISSING'} → {train_raw}")
+        click.echo(f"   📄 Test  raw: {'OK' if test_raw.exists() else 'MISSING'} → {test_raw}")
+
+        # Processed
+        train_proc = path_manager.data_dir / "processed" / "train_features.csv"
+        test_proc = path_manager.data_dir / "processed" / "test_features.csv"
+        click.echo(f"   📁 Train processed: {'OK' if train_proc.exists() else 'MISSING'} → {train_proc}")
+        click.echo(f"   📁 Test  processed: {'OK' if test_proc.exists() else 'MISSING'} → {test_proc}")
+
+        # Config toggles
+        try:
+            data_cfg_dict = config_manager.load_config("data")
+            click.echo("   ⚙️  Data config toggles:")
+            for k in ["handle_missing", "encode_categorical", "scale_features", "feature_importance", "add_original_columns"]:
+                v = data_cfg_dict.get(k, None)
+                click.echo(f"      {k}: {v}")
+            fe = data_cfg_dict.get("feature_engineering", {})
+            toggles = data_cfg_dict.get("feature_toggles", {})
+            click.echo(f"   🔧 Enabled transforms (pre_impute): {fe.get('pre_impute', [])}")
+            click.echo(f"   🔧 Enabled transforms (post_impute): {fe.get('post_impute', [])}")
+            if toggles:
+                on = [k for k, v in toggles.items() if v]
+                off = [k for k, v in toggles.items() if not v]
+                click.echo(f"   🔌 Toggles ON: {on}")
+                click.echo(f"   🔌 Toggles OFF: {off}")
+        except Exception as e:
+            click.echo(f"   ⚠️  Could not load data config: {e}")
+
+        # Latest artifacts
+        latest = path_manager.artifacts_dir / "latest"
+        if latest.exists():
+            click.echo(f"   🧭 Latest run: {latest.resolve()} -> contains models and reports")
+        else:
+            click.echo("   🧭 No 'latest' artifacts symlink yet")
+
+        click.echo("✅ Diagnosis complete")
+    except Exception as e:
+        click.echo(f"❌ Diagnose failed: {e}")
+
+
+@cli.command("suggest-columns")
+@click.option("--top", type=int, default=20, show_default=True, help="Number of columns to suggest")
+def suggest_columns(top: int):
+    """Suggest a compact training column set using RandomForest importance on processed features."""
+    try:
+        import pandas as pd
+        from features.importance.calculator import FeatureImportanceCalculator
+
+        proc_dir = path_manager.data_dir / "processed"
+        train_path = proc_dir / "train_features.csv"
+        if not train_path.exists():
+            click.echo("❌ Processed training features not found. Run 'features' first.")
+            return
+
+        df = pd.read_csv(train_path)
+        id_col = "PassengerId" if "PassengerId" in df.columns else None
+        target_col = "Survived" if "Survived" in df.columns else None
+
+        X = df.drop(columns=[c for c in [id_col, target_col] if c])
+        # numeric/bool only to avoid string leakage
+        X = X.select_dtypes(include=["number", "bool"]) 
+        y = df[target_col] if target_col else None
+        if y is None:
+            click.echo("❌ Target column 'Survived' not found in processed data.")
+            return
+
+        calc = FeatureImportanceCalculator({
+            "feature_importance_config": {
+                "enabled": True,
+                "algorithms": ["random_forest"],
+                "cross_validate": False,
+                "save_results": False,
+            }
+        })
+        res = calc.calculate_importance(X, y)
+        rf = res.get("random_forest")
+        if rf is None or rf.empty:
+            click.echo("❌ Could not compute feature importance.")
+            return
+
+        topk = rf.head(top)["feature"].tolist()
+        click.echo("✅ Suggested training columns (top importance):")
+        for c in topk:
+            click.echo(f"  - {c}")
+        click.echo("\nPaste into configs/data.yaml under train_columns or remove from exclude list.")
+    except Exception as e:
+        click.echo(f"❌ Suggest-columns failed: {e}")
 @click.option("--input-path", type=click.Path(exists=True), required=True,
               help="Path to the CSV to profile")
 @click.option("--output-dir", type=click.Path(), required=True,
@@ -178,13 +284,52 @@ def validate(config: str) -> None:
 @click.option("--experiment-config", default="experiment", help="Experiment configuration name")
 @click.option("--data-config", default="data", help="Data configuration name")
 @click.option("--features-config", type=click.Path(exists=True), help="Path to features.yaml configuration file")
-def features(experiment_config: str, data_config: str, features_config: Optional[str]):
+@click.option("--profile", type=click.Choice(["fast","standard","full"]), help="Optional profile to merge")
+@click.option("--set", "set_overrides", multiple=True, help="Override config values, e.g. key=value. Supports dot paths.")
+def features(experiment_config: str, data_config: str, features_config: Optional[str], profile: Optional[str], set_overrides: tuple[str]):
     """Build features for training and test data."""
 
     try:
         # Load configurations
         exp_config = config_manager.load_config(experiment_config)
         data_config_dict = config_manager.load_config(data_config)
+
+        # Merge profile if provided (applies to both exp and data dicts)
+        if profile:
+            prof_path = path_manager.config_dir / "profiles" / f"{profile}.yaml"
+            if prof_path.exists():
+                prof = config_manager.load_config(str(prof_path))
+                def deep_update(d, u):
+                    for k, v in u.items():
+                        if isinstance(v, dict) and isinstance(d.get(k), dict):
+                            deep_update(d[k], v)
+                        else:
+                            d[k] = v
+                deep_update(exp_config, prof)
+                deep_update(data_config_dict, prof)
+
+        # Apply inline overrides
+        if set_overrides:
+            def _parse_val(v: str):
+                if v.lower() in ("true", "false"): return v.lower() == "true"
+                try:
+                    if "." in v: return float(v)
+                    return int(v)
+                except Exception:
+                    return v
+            def _set(d: dict, path: str, value):
+                parts = path.split(".")
+                cur = d
+                for p in parts[:-1]:
+                    if p not in cur or not isinstance(cur[p], dict):
+                        cur[p] = {}
+                    cur = cur[p]
+                cur[parts[-1]] = value
+            for kv in set_overrides:
+                if "=" in kv:
+                    k, v = kv.split("=", 1)
+                    _set(exp_config, k, _parse_val(v))
+                    _set(data_config_dict, k, _parse_val(v))
 
         experiment_cfg = ExperimentConfig(**exp_config)
         data_cfg = DataConfig(**data_config_dict)
@@ -262,13 +407,52 @@ def features(experiment_config: str, data_config: str, features_config: Optional
 @cli.command()
 @click.option("--experiment-config", default="experiment", help="Experiment configuration name")
 @click.option("--data-config", default="data", help="Data configuration name")
-def train(experiment_config: str, data_config: str):
+@click.option("--profile", type=click.Choice(["fast","standard","full"]), help="Optional profile to merge")
+@click.option("--set", "set_overrides", multiple=True, help="Override config values, e.g. key=value. Supports dot paths.")
+def train(experiment_config: str, data_config: str, profile: Optional[str], set_overrides: tuple[str]):
     """Train model with cross-validation."""
 
     try:
         # Load configurations
         exp_config = config_manager.load_config(experiment_config)
         data_config_dict = config_manager.load_config(data_config)
+
+        # Merge profile if provided
+        if profile:
+            prof_path = path_manager.config_dir / "profiles" / f"{profile}.yaml"
+            if prof_path.exists():
+                prof = config_manager.load_config(str(prof_path))
+                def deep_update(d, u):
+                    for k, v in u.items():
+                        if isinstance(v, dict) and isinstance(d.get(k), dict):
+                            deep_update(d[k], v)
+                        else:
+                            d[k] = v
+                deep_update(exp_config, prof)
+                deep_update(data_config_dict, prof)
+
+        # Apply inline overrides
+        if set_overrides:
+            def _parse_val(v: str):
+                if v.lower() in ("true", "false"): return v.lower() == "true"
+                try:
+                    if "." in v: return float(v)
+                    return int(v)
+                except Exception:
+                    return v
+            def _set(d: dict, path: str, value):
+                parts = path.split(".")
+                cur = d
+                for p in parts[:-1]:
+                    if p not in cur or not isinstance(cur[p], dict):
+                        cur[p] = {}
+                    cur = cur[p]
+                cur[parts[-1]] = value
+            for kv in set_overrides:
+                if "=" in kv:
+                    k, v = kv.split("=", 1)
+                    _set(exp_config, k, _parse_val(v))
+                    _set(data_config_dict, k, _parse_val(v))
 
         experiment_cfg = ExperimentConfig(**exp_config)
         data_cfg = DataConfig(**data_config_dict)
@@ -314,6 +498,13 @@ def train(experiment_config: str, data_config: str):
             drop_cols = [c for c in ['Name', 'Ticket', 'Cabin'] if c in X.columns]
             if drop_cols:
                 X = X.drop(columns=drop_cols)
+
+            # If exclusion list is provided, drop those columns if present
+            if getattr(data_cfg, 'exclude_column_for_training', None):
+                excl = [c for c in (data_cfg.exclude_column_for_training or []) if c in X.columns]
+                if excl:
+                    X = X.drop(columns=excl)
+                    click.echo(f"ℹ️ Dropped excluded training columns: {excl}")
         # Fallback safety: keep only numeric/bool columns (avoids raw objects when originals are kept)
         X = X.select_dtypes(include=["number", "bool"]) 
 
@@ -348,6 +539,20 @@ def train(experiment_config: str, data_config: str):
         click.echo(f"   Strategy: {experiment_cfg.cv_strategy}")
 
         cv_results = trainer.cross_validate(estimator, X, y, trainer_config)
+
+        # Update latest symlink
+        try:
+            run_dir_path = Path(cv_results["run_dir"]).resolve()
+            latest = path_manager.artifacts_dir / "latest"
+            if latest.exists() or latest.is_symlink():
+                try:
+                    latest.unlink()
+                except Exception:
+                    pass
+            latest.symlink_to(run_dir_path)
+            click.echo(f"   🔗 Updated artifacts/latest -> {run_dir_path}")
+        except Exception:
+            pass
 
         # Display results
         scores = cv_results["cv_scores"]
@@ -529,8 +734,9 @@ def evaluate(run_dir: str):
               help="Path to a file with a single float threshold (e.g., best_threshold.txt)")
 @click.option("--threshold", "threshold_value", type=float,
               help="Numeric threshold override (e.g., 0.61)")
+@click.option("--set", "set_overrides", multiple=True, help="Override inference/data config values, e.g. key=value")
 def predict(run_dir: str, inference_config: str, output_path: Optional[str],
-            threshold_file: Optional[str], threshold_value: Optional[float]):
+            threshold_file: Optional[str], threshold_value: Optional[float], set_overrides: tuple[str] = ()): 
     """Generate predictions on test data."""
     try:
         from pathlib import Path
@@ -541,6 +747,30 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str],
 
         # Load inference config
         inference_cfg = config_manager.load_config(inference_config)
+        # Inline overrides for inference/data
+        if set_overrides:
+            def _parse_val(v: str):
+                if isinstance(v, str) and v.lower() in ("true", "false"):
+                    return v.lower() == "true"
+                try:
+                    if isinstance(v, str) and "." in v:
+                        return float(v)
+                    return int(v)
+                except Exception:
+                    return v
+            def _set(d: dict, path: str, value):
+                parts = path.split(".")
+                cur = d
+                for p in parts[:-1]:
+                    if p not in cur or not isinstance(cur.get(p), dict):
+                        cur[p] = {}
+                    cur = cur[p]
+                cur[parts[-1]] = value
+            # Try apply to inference first; user can still target data.* keys but we don't merge here
+            for kv in set_overrides:
+                if "=" in kv:
+                    k, v = kv.split("=", 1)
+                    _set(inference_cfg, k, _parse_val(v))
         th_cfg = inference_cfg.get("threshold", {}) or {}
 
         # Make run_dir available to the predictor for auto-discovery of artifacts
@@ -620,6 +850,12 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str],
             if drop_cols:
                 test_model_df = test_model_df.drop(columns=drop_cols)
 
+        # Apply exclusion list to test as well (after optional selection/drop)
+        if data_cfg and getattr(data_cfg, 'exclude_column_for_training', None):
+            excl = [c for c in (data_cfg.exclude_column_for_training or []) if c in test_model_df.columns]
+            if excl:
+                test_model_df = test_model_df.drop(columns=excl)
+
         if "PassengerId" in test_model_df.columns:
             test_model_df = test_model_df.set_index("PassengerId")
         # Fallback safety: keep only numeric/bool feature columns
@@ -684,20 +920,22 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str],
 @click.option("--experiment-config", default="experiment", help="Experiment configuration name")
 @click.option("--data-config", default="data", help="Data configuration name")
 @click.option("--inference-config", default="inference", help="Inference configuration name")
+@click.option("--profile", type=click.Choice(["fast","standard","full"]), help="Optional profile to merge")
 @click.option("--competition", default="titanic", show_default=True, help="Kaggle competition slug")
 @click.option("--remote", is_flag=True, help="If set, perform remote Kaggle submission")
 @click.option("--message", "-m", default="Auto pipeline run", show_default=True, help="Submission message")
-def autopipeline(experiment_config: str, data_config: str, inference_config: str, competition: str, remote: bool, message: str):
+@click.option("--set", "set_overrides", multiple=True, help="Override config values for all phases (key=value)")
+def autopipeline(experiment_config: str, data_config: str, inference_config: str, profile: Optional[str], competition: str, remote: bool, message: str, set_overrides: tuple[str]):
     """Run end-to-end: features -> train -> predict -> submit (optional remote)."""
     try:
         click.echo("🛠  Building features...")
         ctx = click.get_current_context()
-        ctx.invoke(features, experiment_config=experiment_config, data_config=data_config)
+        ctx.invoke(features, experiment_config=experiment_config, data_config=data_config, profile=profile, set_overrides=set_overrides)
 
         click.echo("🧪 Training model...")
         # Capture stdout from train by invoking and parsing run_dir from artifacts listing afterwards
         before = set(p.name for p in path_manager.artifacts_dir.glob('20*'))
-        ctx.invoke(train, experiment_config=experiment_config, data_config=data_config)
+        ctx.invoke(train, experiment_config=experiment_config, data_config=data_config, profile=profile, set_overrides=set_overrides)
         after = sorted([p for p in path_manager.artifacts_dir.glob('20*') if p.name not in before], key=lambda x: x.stat().st_mtime, reverse=True)
         if not after:
             click.echo("❌ Could not determine training run directory")

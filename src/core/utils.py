@@ -275,6 +275,8 @@ class DataConfig(BaseModel):
     # If provided, training (and prediction) will use exactly these columns
     # (after removing id/target). Missing columns are ignored with a warning.
     train_columns: Optional[List[str]] = None
+    # Alternatively, provide an explicit exclusion list to drop from training/prediction
+    exclude_column_for_training: Optional[List[str]] = None
 
     # ---------- Convenience helpers ----------
     def pre_impute_transforms(self) -> List[str]:

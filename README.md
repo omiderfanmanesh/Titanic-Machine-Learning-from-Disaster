@@ -14,35 +14,42 @@ This pipeline follows **SOLID principles** with a modular, interface-based desig
 
 ## 🚀 Quick Start
 
-### Installation
+Option 1 — Run via Python (no install):
 
 ```bash
-# Clone the repository
-git clone <your-repo-url>
-cd titanic-ml-pipeline
+# Build features
+python src/cli.py features --experiment-config experiment --data-config data
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Train (creates artifacts/<run> and artifacts/latest symlink)
+python src/cli.py train --experiment-config experiment --data-config data
 
-# Install the package
-pip install -e .
+# Predict using the latest run
+python src/cli.py predict --run-dir artifacts/latest
+
+# Diagnose environment & data
+python src/cli.py diagnose
 ```
 
-### Basic Usage
+Option 2 — Install local CLI:
 
 ```bash
-# Download Kaggle data (requires Kaggle API setup)
-titanic-ml download --competition titanic
+pip install -e .                 # base deps
+# Optional extras:
+# pip install -e .[boosting]     # xgboost/lightgbm/catboost
+# pip install -e .[encoders]     # category-encoders
 
-# Run complete pipeline with default configuration
-titanic-ml train --config configs/experiment.yaml
+# Use the CLI
+titanic diagnose
+titanic features --experiment-config experiment --data-config data
+titanic train --experiment-config experiment --data-config data
+titanic predict --run-dir artifacts/latest
+```
 
-# Generate predictions
-titanic-ml predict --model-path artifacts/latest/model_logistic.joblib --output predictions.csv
+Makefile shortcuts:
 
-# Create Kaggle submission
-titanic-ml submit --predictions predictions.csv --output submission.csv
+```bash
+make quickstart   # features -> train -> predict
+make fast         # same, using the 'fast' profile
 ```
 
 ## 📊 Pipeline Components

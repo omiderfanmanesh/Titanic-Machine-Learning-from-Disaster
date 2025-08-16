@@ -67,9 +67,12 @@ class FeatureImportanceVisualizer:
         plt.title(f"Top {self.top_k} Features - {algorithm.title()} Importance")
         plt.gca().invert_yaxis()
 
-        # Add value labels on bars - fix Series access
+        # Add value labels on bars - robust float conversion
         for i, (idx, row) in enumerate(top_features.iterrows()):
-            importance_val = row["importance"].item()  # Use .item() to extract scalar value
+            try:
+                importance_val = float(row["importance"])
+            except Exception:
+                importance_val = 0.0
             plt.text(importance_val + 0.001, i, f'{importance_val:.3f}',
                     va='center', fontsize=9)
 

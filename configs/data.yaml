@@ -37,12 +37,16 @@ feature_importance: true
 add_original_columns: false
 
 # Explicit feature list used for training and prediction
-train_columns:
-  - AgeBin
-  - FamilySize
-  - IsAlone
-  - TicketGroupSize
+# Instead of explicit include list, drop these columns from training/prediction
+exclude_column_for_training:
   - Ticket_number
+  - First_Middle
+  - MaidenName
+  - Surname
+  - Ticket_number
+  - Ticket_prefix
+  - Title_First_Middle
+  - Title_Raw
 
 # Only keep the ID as passthrough
 skip_encoding_columns: [PassengerId]
@@ -89,8 +93,8 @@ encoding:
 # IMPUTATION
 # =========================
 imputation:
-  # Fill Fare first, then predict Age using Fare + other features
-  order: [Fare, Age]
+  # Impute in order: Fare -> Embarked -> Age
+  order: [Fare, Embarked, Age]
 
   # Skip ID/text/engineered categoricals; we don't need to fill them
   exclude: [PassengerId, Name, Ticket, Title, Deck, Surname, Title_First_Middle, Title_Raw, First_Middle, MaidenName, Ticket_prefix]

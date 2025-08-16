@@ -70,6 +70,17 @@ class TitanicFeatureBuilder(ITransformer):
         self.pipeline_post.fit(Xt, y)
         Xt = self.pipeline_post.transform(Xt)
 
+        # 3.5) Apply exclusion list BEFORE encoding to avoid generating dummies
+        try:
+            excl = set(self.config.get("exclude_column_for_training") or [])
+            if excl:
+                drop_cols = [c for c in Xt.columns if c in excl]
+                if drop_cols:
+                    Xt = Xt.drop(columns=drop_cols)
+                    self.logger.info(f"Excluded columns removed before encoding: {drop_cols}")
+        except Exception:
+            pass
+
         # 4) Encoding
         cat_cols = self.config.get("categorical_columns", [])
         self.encoder.fit(Xt, y, categorical_cols=cat_cols)
@@ -113,6 +124,15 @@ class TitanicFeatureBuilder(ITransformer):
         if self.imputer is not None:
             Xt = self.imputer.transform(Xt)
         Xt = self.pipeline_post.transform(Xt)
+        # Apply exclusion BEFORE encoding during inference-time transform as well
+        try:
+            excl = set(self.config.get("exclude_column_for_training") or [])
+            if excl:
+                drop_cols = [c for c in Xt.columns if c in excl]
+                if drop_cols:
+                    Xt = Xt.drop(columns=drop_cols)
+        except Exception:
+            pass
         Xt = self.encoder.transform(Xt)
 
         # Align to frozen encoded schema
@@ -210,14 +230,22 @@ class TitanicFeatureBuilder(ITransformer):
             target_col = self.config.get("target_column", "Survived")
 
             # Get feature columns only (exclude ID and target)
-            feature_cols = [col for col in X_processed.columns
-                          if col not in [id_col, target_col]]
+            feature_cols = [col for col in X_processed.columns if col not in [id_col, target_col]]
+
+            # Respect exclusion list for FI as well
+            excl = set(self.config.get("exclude_column_for_training") or [])
+            if excl:
+                feature_cols = [c for c in feature_cols if c not in excl]
 
             if not feature_cols:
                 self.logger.warning("No feature columns found for importance calculation")
                 return
 
-            X_features = X_processed[feature_cols]
+            # Use numeric/bool only to avoid string/object leakage
+            X_features = X_processed[feature_cols].select_dtypes(include=["number", "bool"]) 
+            if X_features.empty:
+                self.logger.warning("No numeric/bool features available for importance calculation")
+                return
 
             self.logger.info(f"Calculating importance for {len(feature_cols)} features")
 

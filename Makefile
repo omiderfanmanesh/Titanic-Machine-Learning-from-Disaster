@@ -152,3 +152,22 @@ help-quality: ## Show code quality help
 	@echo "  make format       - Auto-format code"
 	@echo "  make type-check   - Run type checking"
 	@echo "  make quality      - Run all quality checks"
+quickstart: ## Run end-to-end: features -> train -> predict
+	python src/cli.py features --experiment-config experiment --data-config data
+	python src/cli.py train --experiment-config experiment --data-config data
+	@latest=$$(readlink artifacts/latest 2>/dev/null || ls -d artifacts/20* 2>/dev/null | tail -n1); \
+	if [ -n "$$latest" ]; then \
+		python src/cli.py predict --run-dir $$latest; \
+	else \
+		echo "No artifacts found to run predict."; \
+	fi
+
+fast: ## Fast profile end-to-end (fewer folds/features)
+	python src/cli.py features --experiment-config experiment --data-config data --profile fast
+	python src/cli.py train --experiment-config experiment --data-config data --profile fast
+	@latest=$$(readlink artifacts/latest 2>/dev/null || ls -d artifacts/20* 2>/dev/null | tail -n1); \
+	if [ -n "$$latest" ]; then \
+		python src/cli.py predict --run-dir $$latest; \
+	else \
+		echo "No artifacts found to run predict."; \
+	fi
