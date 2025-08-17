@@ -149,6 +149,42 @@ class TitanicFeatureBuilder(ITransformer):
         self.logger.info(f"✅ Transformed data shape: {Xt.shape}")
         return Xt
 
+    # -------- validation helpers --------
+    def validate_no_nans(self, X: pd.DataFrame, context: str = "") -> int:
+        """
+        Assert there are no NaNs in provided DataFrame X. If NaNs exist,
+        log detailed per-column counts and show a sample of offending rows.
+        Returns the total number of NaN cells found. Does not modify X.
+        """
+        import numpy as _np
+        import pandas as _pd
+
+        # Compute per-column NaN counts
+        nan_counts = X.isna().sum()
+        nan_cols = nan_counts[nan_counts > 0].sort_values(ascending=False)
+        total_nan = int(nan_cols.sum()) if not nan_cols.empty else 0
+
+        if total_nan > 0:
+            ctx = f" ({context})" if context else ""
+            self.logger.error(
+                f"NaNs detected{ctx}. columns_with_nans={len(nan_cols)}; top offenders:\n"
+                f"{nan_cols.head(10).to_string()}"
+            )
+            # Show first few offending rows restricted to offending columns
+            try:
+                off_cols = nan_cols.index.tolist()
+                off_rows = X[off_cols].isna().any(axis=1)
+                sample = X.loc[off_rows, off_cols].head(5)
+                if not sample.empty:
+                    self.logger.error(
+                        "Sample offending rows (first 5 shown, offending columns only):\n" +
+                        sample.to_string()
+                    )
+            except Exception:
+                pass
+
+        return total_nan
+
     # -------- helpers --------
     def fit_transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
         # First do the normal fit and transform

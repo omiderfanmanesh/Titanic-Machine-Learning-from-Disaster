@@ -488,7 +488,8 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
         # If ensemble config is provided, run multi-model training in one run
         ens_cfg = (getattr(experiment_cfg, "ensemble", None) or {})
         model_list = ens_cfg.get("model_list") if isinstance(ens_cfg, dict) else getattr(ens_cfg, "model_list", [])
-        if model_list:
+        use_ensemble = bool(ens_cfg.get("use", False)) if isinstance(ens_cfg, dict) else bool(getattr(ens_cfg, "use", False))
+        if use_ensemble and model_list:
             click.echo("🤝 Ensemble mode detected — training multiple models in one run")
 
             # Create run directory up-front
@@ -570,8 +571,30 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
 
                 oof = np.zeros(n_samples, dtype=float)
                 fold_scores: list[float] = []
+                skip_model_due_to_nan = False
 
                 for fold_idx, (_, X_tr, y_tr, X_va, y_va, va_idx) in enumerate(fold_pipes):
+                    # Detailed NaN logging and skip if model can't handle NaNs
+                    def _nan_report(df, lbl):
+                        counts = df.isna().sum()
+                        bad = counts[counts > 0].sort_values(ascending=False)
+                        if not bad.empty:
+                            click.echo(
+                                f"   ❌ NaNs detected for model '{m_name}' on fold {fold_idx}: {lbl} "
+                                f"cols_with_nans={len(bad)}\n{bad.head(10).to_string()}"
+                            )
+                        return not bad.empty
+
+                    has_nan_tr = _nan_report(X_tr, "X_train")
+                    has_nan_va = _nan_report(X_va, "X_valid")
+                    # Conservative: most sklearn classic estimators don't support NaN; if present, stop this model
+                    if has_nan_tr or has_nan_va:
+                        skip_model_due_to_nan = True
+                        click.echo(
+                            f"   ⏭️  Skipping model '{m_name}' due to NaNs in features on fold {fold_idx}. "
+                            "Consider enabling/adjusting imputation or switching to HistGradientBoosting/XGBoost/LightGBM/CatBoost."
+                        )
+                        break
                     # Clone estimator per fold
                     est_fold = clone(estimator)
                     est_fold.fit(X_tr, y_tr)
@@ -597,6 +620,9 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
                     # Fill OOF
                     oof[va_idx] = fold_pred
 
+                if skip_model_due_to_nan:
+                    click.echo(f"   ⚠️  Model '{m_name}' was not trained due to NaNs; continuing with remaining models")
+                    continue
                 per_model_oof[m_name] = oof
                 per_model_fold_scores[m_name] = fold_scores
 
@@ -791,13 +817,19 @@ def evaluate(run_dir: str):
 
         run_path = Path(run_dir)
 
-        # Load OOF predictions and scores
+        # Load OOF predictions and scores (support both single-model and ensemble artifacts)
         oof_path = run_path / "oof_predictions.csv"
         scores_path = run_path / "cv_scores.json"
-
-        if not oof_path.exists() or not scores_path.exists():
-            click.echo("❌ Required files not found in run directory")
-            return
+        if not (oof_path.exists() and scores_path.exists()):
+            # Fallback to ensemble files if present
+            ens_oof = run_path / "oof_ensemble.csv"
+            ens_scores = run_path / "ensemble_cv_scores.json"
+            if ens_oof.exists() and ens_scores.exists():
+                oof_path, scores_path = ens_oof, ens_scores
+                click.echo("ℹ️ Using ensemble OOF and scores for evaluation")
+            else:
+                click.echo("❌ Required files not found in run directory")
+                return
 
         # Load data
         oof_df = pd.read_csv(oof_path)

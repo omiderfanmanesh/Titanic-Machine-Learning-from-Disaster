@@ -77,7 +77,7 @@ class FeatureImportanceVisualizer:
                     va='center', fontsize=9)
 
         plt.tight_layout()
-        filename = f"importance_{algorithm}_{timestamp}.png"
+        filename = f"importance_{algorithm}.png"
         plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
         plt.close()
 
@@ -126,7 +126,7 @@ class FeatureImportanceVisualizer:
         ax.legend()
 
         plt.tight_layout()
-        filename = f"importance_comparison_{timestamp}.png"
+        filename = f"importance_comparison.png"
         plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
         plt.close()
 
@@ -204,7 +204,7 @@ class FeatureImportanceVisualizer:
         plt.grid(axis='y', alpha=0.3)
 
         plt.tight_layout()
-        filename = f"model_performance_{timestamp}.png"
+        filename = f"model_performance.png"
         plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
         plt.close()
 
@@ -263,7 +263,7 @@ class FeatureImportanceVisualizer:
         report_content = "\n".join(report_lines)
 
         # Save report
-        report_file = self.output_dir / f"feature_importance_report_{timestamp}.txt"
+        report_file = self.output_dir / f"feature_importance_report.txt"
         with open(report_file, "w") as f:
             f.write(report_content)
 

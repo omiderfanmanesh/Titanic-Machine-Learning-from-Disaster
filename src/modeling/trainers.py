@@ -170,6 +170,31 @@ class TitanicTrainer(ITrainer):
         fold_model = clone(base_model)
         
         # Train model on processed features
+        # Guard against NaNs: stop and log detailed columns if found
+        if fold_feature_pipeline is not None and hasattr(fold_feature_pipeline, "validate_no_nans"):
+            n_train_nans = fold_feature_pipeline.validate_no_nans(X_train, context=f"fold {fold_idx+1} X_train")
+            n_val_nans = fold_feature_pipeline.validate_no_nans(X_val, context=f"fold {fold_idx+1} X_val")
+        else:
+            def _log_nan_details(df: pd.DataFrame, label: str) -> int:
+                nan_counts = df.isna().sum()
+                nan_cols = nan_counts[nan_counts > 0].sort_values(ascending=False)
+                if not nan_cols.empty:
+                    self.logger.error(
+                        f"Fold {fold_idx + 1}: NaNs detected in {label}. "
+                        f"columns_with_nans={len(nan_cols)}; top offenders:\n{nan_cols.head(10).to_string()}"
+                    )
+                return int(nan_cols.sum()) if not nan_cols.empty else 0
+
+            n_train_nans = _log_nan_details(X_train, "X_train")
+            n_val_nans = _log_nan_details(X_val, "X_val")
+        if n_train_nans or n_val_nans:
+            raise ValueError(
+                f"NaNs present in features for fold {fold_idx + 1}: "
+                f"train_total_nan_entries={n_train_nans}, val_total_nan_entries={n_val_nans}. "
+                "See error logs for per-column details."
+            )
+
+        # Train model on processed features
         fold_model.fit(X_train, y_train)
         
         # Make predictions on processed validation set

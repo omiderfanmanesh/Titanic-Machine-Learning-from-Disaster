@@ -188,20 +188,25 @@ class CacheKeyGenerator:
 
 # Configuration schemas using Pydantic
 class EnsembleModelSpec(BaseModel):
+    model_config = {'protected_namespaces': ()}
     name: str
     params: Dict[str, Any] = Field(default_factory=dict)
 
 
 class EnsembleConfig(BaseModel):
+    model_config = {'protected_namespaces': ()}
+    use: bool = False
     model_list: List[EnsembleModelSpec] = Field(default_factory=list)
     method: str = Field("average", description="average | weighted | rank_average | geometric_mean | median | max | min")
     weights: Optional[List[float]] = None
 
 class MetaModelSpec(BaseModel):
+    model_config = {'protected_namespaces': ()}
     name: str = "logistic"
     params: Dict[str, Any] = Field(default_factory=dict)
 
 class StackingConfig(BaseModel):
+    model_config = {'protected_namespaces': ()}
     use: bool = False
     meta_model: MetaModelSpec = Field(default_factory=MetaModelSpec)
 

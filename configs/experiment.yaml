@@ -14,15 +14,15 @@ debug_n_rows: null
 #  n_jobs: -1
 
 # add gradient_boosting model with specific parameters
-model_name: gradient_boosting
-model_params:
-  n_estimators: 84
-  learning_rate: 0.1326731327153492
-  max_depth: 3
-  min_samples_split: 4
-  min_samples_leaf: 2
-  subsample: 0.8348468611017669
-  random_state: 42
+#model_name: gradient_boosting
+#model_params:
+#  n_estimators: 84
+#  learning_rate: 0.1326731327153492
+#  max_depth: 3
+#  min_samples_split: 4
+#  min_samples_leaf: 2
+#  subsample: 0.8348468611017669
+#  random_state: 42
 
 #Add xgboost model with specific parameters
 #model_name: xgboost
@@ -36,6 +36,15 @@ model_params:
 #    reg_lambda: 0.9453885209468716
 #    min_child_weight: 7
 #    random_state: 42
+
+# Add catboost model with specific parameters
+model_name: catboost
+model_params:
+  iterations: 337
+  learning_rate: 0.011597947232020168
+  depth: 10
+  l2_leaf_reg: 2.392640911001029
+  bagging_temperature: 0.9980995133299302
 
 
 
@@ -56,10 +65,11 @@ logging_level: INFO
 # save per-model OOF predictions and fold checkpoints. The predict
 # command will ensemble these models per-fold at inference time.
 ensemble:
+  use: true
   model_list:
-    - name: random_forest
-      params: { n_estimators: 400, max_depth: 8, random_state: 42 }
-    - name: xgboost
-      params: { n_estimators: 300, max_depth: 4, learning_rate: 0.08, subsample: 0.8, colsample_bytree: 0.8, random_state: 42 }
+    - name: catboost
+      params: { iterations: 337, learning_rate: 0.011597947232020168, depth: 10, l2_leaf_reg: 2.392640911001029, bagging_temperature: 0.9980995133299302 }
+    - name: gradient_boosting
+      params: { n_estimators: 84, learning_rate: 0.1326731327153492, max_depth: 3, min_samples_split: 4, min_samples_leaf: 2, subsample: 0.8348468611017669, random_state: 42 }
   method: average
   weights: null

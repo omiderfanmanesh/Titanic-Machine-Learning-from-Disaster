@@ -38,7 +38,10 @@ class OneHotStrategy(IEncoderStrategy):
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         Xc = _as_string_frame(X, self.col)
         if self._use_ce:
-            return self.enc.transform(Xc)
+            df = self.enc.transform(Xc)
+            # Robustness: category_encoders may emit NaN for some missing/unknown cases
+            # Ensure a dense 0/1 frame without NaNs
+            return df.fillna(0).astype(int)
         # pandas get_dummies fallback with fixed columns
         dummies = pd.get_dummies(Xc[self.col].astype("string").fillna(_MISSING), prefix=self.col)
         # Ensure all expected columns exist

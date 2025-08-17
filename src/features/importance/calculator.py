@@ -259,10 +259,9 @@ class FeatureImportanceCalculator:
         """Save feature importance results to files."""
 
         
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Save individual algorithm results
+        # Save individual algorithm results (deterministic filenames, overwrite existing)
         for algorithm, df in results.items():
-            filename = f"feature_importance_{algorithm}_{ts}.csv"
+            filename = f"feature_importance_{algorithm}.csv"
             filepath = self.output_dir / filename
             df.to_csv(filepath, index=False)
             self.logger.info(f"Saved {algorithm} importance to {filepath}")
@@ -270,12 +269,12 @@ class FeatureImportanceCalculator:
         # Save combined summary
         self._save_combined_summary(results)
         
-        # Save model scores
+        # Save model scores (deterministic filename)
         scores_df = pd.DataFrame([
             {"algorithm": alg, "cv_score": score} 
             for alg, score in self.model_scores.items()
         ])
-        scores_file = self.output_dir / f"model_scores_{ts}.csv"
+        scores_file = self.output_dir / "model_scores.csv"
         scores_df.to_csv(scores_file, index=False)
         
     def _save_combined_summary(self, results: Dict[str, pd.DataFrame]) -> None:
