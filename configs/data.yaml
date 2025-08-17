@@ -66,6 +66,8 @@ exclude_column_for_training:
   - IsAlone
   - Age
   - TicketGroupSize
+  - Deck
+
 
 
 
