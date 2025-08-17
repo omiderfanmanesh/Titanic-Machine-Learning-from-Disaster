@@ -30,7 +30,7 @@ categorical_columns: [Sex,Surname, Embarked, Pclass, Deck, Title,Ticket_number, 
 # =========================
 handle_missing: true
 encode_categorical: true
-scale_features: true
+scale_features: false
 feature_importance: true
 
 # =========================
@@ -47,25 +47,22 @@ cv_metric: f1                 # accuracy, f1, or roc_auc
 # Include original raw columns in final dataset (alongside engineered/encoded)
 add_original_columns: false
 
-# Explicit feature list used for training and prediction
-# Instead of explicit include list, drop these columns from training/prediction
+# Explicit feature list (optional). If provided, list PRE-ENCODING names
+# (e.g., Pclass, Sex, Embarked, Title, Age, Fare). The pipeline will include
+# those numeric columns directly and all encoded outputs derived from
+# categorical names (e.g., Pclass_*). If omitted, the exclusion list below applies.
+# train_columns: []
+
+# Columns to drop from training/prediction if train_columns is not specified
 exclude_column_for_training:
   - Ticket_number
   - First_Middle
   - MaidenName
-#  - Surname
+  - Surname
   - Ticket_prefix
   - Title_First_Middle
   - Title_Raw
-#  - IsAlone
-#  - FamilySize
-#  - Sex
-#  - Deck
-  - Embarked
-#  - AgeBin
-#  - Title
-#  - Fare_Transformed
-#  - Pclass
+  - IsAlone
 
 
 
@@ -101,27 +98,27 @@ encoding:
     handle_missing: "value"
     handle_unknown: "ignore"
   per_column:
-    Surname:
-      method: label       # keep as-is, no encoding
+#    Surname:
+#      method: onehot       # keep as-is, no encoding
     Title:
-      method: label            # simple, no extra dependency
+      method: onehot            # simple, no extra dependency
     Deck:
-      method: label           # safe, low-cardinality one-hot
+      method: onehot           # safe, low-cardinality one-hot
     Embarked:
       method: onehot           # S/C/Q one-hot (clearer than single WOE col)
     AgeBin:
-      method: label          # treat as ordered categories
-    Ticket_number:
-      method: label           # keep as-is, no encoding
-    Ticket_prefix:
-      method: label           # keep as-is, no encoding
+      method: onehot          # treat as ordered categories
+#    Ticket_number:
+#      method: label           # keep as-is, no encoding
+#    Ticket_prefix:
+#      method: label           # keep as-is, no encoding
 
 # =========================
 # IMPUTATION
 # =========================
 imputation:
   # Impute in order: Fare -> Embarked -> Age
-  order: [ Embarked,age]
+  order: [ Embarked,Age]
 
   # Skip ID/text/engineered categoricals; we don't need to fill them
   exclude: [PassengerId, Name,  Title, Deck, Surname, Title_First_Middle, Title_Raw, First_Middle, MaidenName]
@@ -136,14 +133,16 @@ imputation:
 
   per_column:
     Age:
-      method: model
-      estimator: random_forest
-      features: [Pclass, Sex, SibSp, Parch, Fare, Embarked]
-      n_estimators: 400
-      max_depth: null
-      random_state: 42
-      clip_min: 0
-      clip_max: 80
+      method: mean
+#    Age:
+#      method: model
+#      estimator: random_forest
+#      features: [Pclass, Sex, SibSp, Parch, Fare, Embarked]
+#      n_estimators: 400
+#      max_depth: null
+#      random_state: 42
+#      clip_min: 0
+#      clip_max: 80
 
 #    Fare:
 #      method: mean
@@ -169,10 +168,11 @@ feature_engineering:
     - FamilySizeTransform      # → FamilySize, IsAlone
     - TicketParseTransform     # → Ticket_prefix, Ticket_number (before imputation)
     - DeckTransform            # → Deck (maps missing to 'U')
+    - AgeImputeByTitleTransform # Impute Age using Title + Pclass (before Fare imputation)
   post_impute:
     - TicketGroupTransform     # → TicketGroupSize (numeric)
     - FareTransform            # fix Fare==0 using class mean  then optional log to Fare_log
-    - AgeBinningTransform      # → AgeBin (numeric)
+#    - AgeBinningTransform      # → AgeBin (numeric)
 
 # Enable/disable individual transforms by class name
 feature_toggles:
@@ -183,6 +183,7 @@ feature_toggles:
   TicketGroupTransform: false
   FareTransform: true
   AgeBinningTransform: false
+  AgeImputeByTitleTransform: false  # Impute Age using Title + Pclass
 
  # =========================
 # FEATURE IMPORTANCE

@@ -5,7 +5,7 @@ from features.transforms import (
     DeckTransform,
     TicketGroupTransform,
     FareTransform,
-    AgeBinningTransform,
+    AgeBinningTransform, AgeImputeByTitleTransform,
 )
 from features.transforms.ticket_parse import TicketParseTransform
 
@@ -17,6 +17,7 @@ TRANSFORM_MAP = {
     "FareTransform": FareTransform,
     "AgeBinningTransform": AgeBinningTransform,
     "TicketParseTransform": TicketParseTransform,
+    "AgeImputeByTitleTransform": AgeImputeByTitleTransform,
 }
 
 def _is_enabled(name: str, config: dict) -> bool:
@@ -38,6 +39,8 @@ def build_pipeline_from_config(stage_list: list, config: dict):
             transforms.append(FareTransform(log_transform=config.get("log_transform_fare", False)))
         elif name == "AgeBinningTransform":
             transforms.append(AgeBinningTransform(n_bins=config.get("age_bins", 5)))
+        elif name == "AgeImputeByTitleTransform":
+            transforms.append(AgeImputeByTitleTransform())
         elif name == "TitleTransform":
             transforms.append(
                 TitleTransform(

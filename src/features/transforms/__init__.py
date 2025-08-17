@@ -9,6 +9,7 @@ from .ticket_group import TicketGroupTransform
 from .fare import FareTransform
 from .age_binning import AgeBinningTransform
 from .family_size import FamilySizeTransform
+from .age_impute_by_title import AgeImputeByTitleTransform
 
 __all__ = [
     "TitleTransform",
@@ -17,4 +18,5 @@ __all__ = [
     "FareTransform",
     "AgeBinningTransform",
     "FamilySizeTransform",
+    "AgeImputeByTitleTransform",
 ]

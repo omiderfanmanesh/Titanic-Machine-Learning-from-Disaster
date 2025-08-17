@@ -71,13 +71,15 @@ class TitanicFeatureBuilder(ITransformer):
         Xt = self.pipeline_post.transform(Xt)
 
         # 3.5) Apply exclusion list BEFORE encoding to avoid generating dummies
+        # If train_columns (inclusion) is provided, skip exclusion to avoid conflicts
         try:
-            excl = set(self.config.get("exclude_column_for_training") or [])
-            if excl:
-                drop_cols = [c for c in Xt.columns if c in excl]
-                if drop_cols:
-                    Xt = Xt.drop(columns=drop_cols)
-                    self.logger.info(f"Excluded columns removed before encoding: {drop_cols}")
+            if not (isinstance(self.config.get("train_columns"), list) and self.config.get("train_columns")):
+                excl = set(self.config.get("exclude_column_for_training") or [])
+                if excl:
+                    drop_cols = [c for c in Xt.columns if c in excl]
+                    if drop_cols:
+                        Xt = Xt.drop(columns=drop_cols)
+                        self.logger.info(f"Excluded columns removed before encoding: {drop_cols}")
         except Exception:
             pass
 
@@ -125,12 +127,14 @@ class TitanicFeatureBuilder(ITransformer):
             Xt = self.imputer.transform(Xt)
         Xt = self.pipeline_post.transform(Xt)
         # Apply exclusion BEFORE encoding during inference-time transform as well
+        # Skip if inclusion list is provided
         try:
-            excl = set(self.config.get("exclude_column_for_training") or [])
-            if excl:
-                drop_cols = [c for c in Xt.columns if c in excl]
-                if drop_cols:
-                    Xt = Xt.drop(columns=drop_cols)
+            if not (isinstance(self.config.get("train_columns"), list) and self.config.get("train_columns")):
+                excl = set(self.config.get("exclude_column_for_training") or [])
+                if excl:
+                    drop_cols = [c for c in Xt.columns if c in excl]
+                    if drop_cols:
+                        Xt = Xt.drop(columns=drop_cols)
         except Exception:
             pass
         Xt = self.encoder.transform(Xt)
@@ -205,49 +209,81 @@ class TitanicFeatureBuilder(ITransformer):
         id_col = self.config.get("id_column", "PassengerId")
         target_col = self.config.get("target_column", "Survived")
 
-        # Start with all current columns
-        all_cols = set(Xt.columns)
+        # Inclusion mode: if provided, interpret keys as PRE-ENCODING names.
+        # We will select columns that either exactly match the requested base name
+        # (numeric/engineered features) or that start with '<base>_' (one-hot/encoded outputs).
+        train_cols = self.config.get("train_columns")
+        if isinstance(train_cols, list) and train_cols:
+            selected: List[str] = []
+            matched_bases: set[str] = set()
 
-        # Decide whether to include original columns
+            cols = list(Xt.columns)
+            for base in train_cols:
+                # exact match
+                if base in Xt.columns:
+                    selected.append(base)
+                    matched_bases.add(base)
+                # prefix match for encoded outputs
+                prefix = f"{base}_"
+                prefixed = [c for c in cols if c.startswith(prefix)]
+                if prefixed:
+                    selected.extend(prefixed)
+                    matched_bases.add(base)
+
+            # Deduplicate and sort (keep stable order by column order)
+            seen = set()
+            selected_ordered = [c for c in cols if (c in selected and (c not in seen and not seen.add(c)))]
+
+            # Build final ordered list with id first and target last
+            ordered: List[str] = []
+            if id_col in Xt.columns:
+                ordered.append(id_col)
+            ordered.extend(selected_ordered)
+            if target_col in Xt.columns:
+                ordered.append(target_col)
+
+            # Log any requested bases that matched nothing
+            missing_bases = [b for b in train_cols if b not in matched_bases]
+            if missing_bases:
+                self.logger.warning(
+                    f"Requested train_columns (pre-encoding names) not found after transforms: {missing_bases}"
+                )
+            self.logger.info(
+                f"Column order (inclusion mode): {id_col} first, {len(selected_ordered)} selected features, {target_col} last"
+            )
+            return ordered
+
+        # Default behavior: drop original raw columns unless explicitly kept
+        all_cols = set(Xt.columns)
         keep_original = bool(self.config.get("add_original_columns", self.config.get("add_original_column", False)))
 
         if keep_original:
-            final_cols = set(all_cols)  # keep everything for ordering, we'll pop id/target below
+            final_cols = set(all_cols)
         else:
-            # Define original columns that should be removed (they've been transformed)
-            original_cols_to_remove = {
-                "Name", "Age", "SibSp", "Parch", "Ticket", "Fare", "Cabin",
-                "Sex", "Embarked", "Pclass"
-            }
-            # Remove original columns from the set
+            # Keep numeric/raw engineered features like Age, Fare, SibSp, Parch by default.
+            # Drop known raw text identifiers that we never want in modeling.
+            original_cols_to_remove = {"Name", "Ticket"}
             final_cols = all_cols - original_cols_to_remove
 
-        # Convert to list and create ordered column list
-        ordered_cols = []
-
-        # 1. Add ID column first (if present)
+        ordered_cols: List[str] = []
         if id_col in final_cols:
             ordered_cols.append(id_col)
             final_cols.remove(id_col)
 
-        # 2. Add target column to separate list (will be added last)
         target_to_add = None
         if target_col in final_cols:
             target_to_add = target_col
             final_cols.remove(target_col)
 
-        # 3. Add all feature columns (sorted for consistency)
         feature_cols = sorted(list(final_cols))
         ordered_cols.extend(feature_cols)
-
-        # 4. Add target column last (if present)
         if target_to_add:
             ordered_cols.append(target_to_add)
 
         self.logger.info(f"Column order: {id_col} first, {len(feature_cols)} features, {target_col} last")
         try:
             if not keep_original:
-                removed = {"Name", "Age", "SibSp", "Parch", "Ticket", "Fare", "Cabin", "Sex", "Embarked", "Pclass"} & all_cols
+                removed = {"Name", "Ticket"} & all_cols
                 self.logger.info(f"Removed original columns: {sorted(removed)}")
             else:
                 self.logger.info("Kept original raw columns as requested (add_original_columns=True)")

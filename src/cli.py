@@ -104,7 +104,7 @@ def diagnose():
                 off = [k for k, v in toggles.items() if not v]
                 click.echo(f"   🔌 Toggles ON: {on}")
                 click.echo(f"   🔌 Toggles OFF: {off}")
-        except Exception:
+        except Exception as e:
             click.echo(f"   ⚠️  Could not load data config: {e}")
 
         # Latest artifacts
