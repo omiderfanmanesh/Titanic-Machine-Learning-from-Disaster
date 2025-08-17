@@ -17,6 +17,7 @@ from sklearn.ensemble import (
     ExtraTreesClassifier,
 )
 from sklearn.linear_model import LogisticRegression, RidgeClassifier, SGDClassifier
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 
 from core.interfaces import IModel
@@ -205,6 +206,20 @@ class SGDLogisticModel(BaseModel):
         return SGDClassifier(**default_params)
 
 
+class KNNModel(BaseModel):
+    """k-Nearest Neighbors classifier."""
+
+    def _create_model(self, **params) -> BaseEstimator:
+        default_params = {
+            "n_neighbors": 15,
+            "weights": "distance",
+            "metric": "minkowski",
+            "n_jobs": -1,
+        }
+        default_params.update(params)
+        return KNeighborsClassifier(**default_params)
+
+
 class SVMModel(BaseModel):
     """Support Vector Machine model wrapper."""
     
@@ -306,6 +321,7 @@ class ModelRegistry:
             "extra_trees": ExtraTreesModel,
             "ridge": RidgeClassifierModel,
             "sgd_logistic": SGDLogisticModel,
+            "knn": KNNModel,
             "svm": SVMModel
         }
         

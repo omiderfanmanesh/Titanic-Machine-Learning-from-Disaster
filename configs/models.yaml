@@ -9,3 +9,11 @@ models:
     params: {n_estimators: 300, learning_rate: 0.05, max_depth: 3, random_state: 42}
   - name: logistic
     params: {C: 1.0, random_state: 42}
+  - name: extra_trees
+    params: {n_estimators: 500, max_depth: null, random_state: 42}
+  - name: ridge
+    params: {alpha: 1.0}
+  - name: sgd_logistic
+    params: {loss: log_loss, max_iter: 3000, tol: 1e-3, random_state: 42}
+  - name: knn
+    params: {n_neighbors: 21, weights: distance}

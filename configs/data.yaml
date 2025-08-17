@@ -67,7 +67,7 @@ imbalance:
 # Alternative to resampling. If both imbalance.enabled and class_weight.enabled
 # are true, resampling is applied first, then class_weight/sample_weight.
 class_weight:
-  enabled: false
+  enabled: true
   # scheme: balanced|custom
   scheme: balanced
   # Only used when scheme: custom
@@ -94,6 +94,12 @@ exclude_column_for_training:
   - TicketGroupSize
   - Deck
   - Embarked
+#  - Pclass
+#  - Sex
+#  - Title
+#  - Parch
+#  - SibSp
+#  - FamilySize
 
 
 

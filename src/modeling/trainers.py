@@ -403,6 +403,12 @@ class TitanicTrainer(ITrainer):
                 pass
         if 'catboost' in est_mod:
             try:
+                # If user already enabled auto_class_weights, don't set class_weights to avoid conflict
+                ep = est_params
+                auto_cw = ep.get('auto_class_weights', ep.get('AutoClassWeights', None))
+                if auto_cw not in (None, 'None', 'Disabled', False):
+                    self.logger.info("CatBoost auto_class_weights is set; skipping explicit class_weights to avoid conflict")
+                    return estimator, None
                 # CatBoost uses class_weights=[w0, w1]
                 w0 = 1.0
                 w1 = float(n0)/float(n1) if n1 > 0 else 1.0

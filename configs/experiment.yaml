@@ -72,6 +72,13 @@ debug_n_rows: null
 #  C: 1.0
 #  gamma: scale
 
+# add KNN model with specific parameters
+#model_name: knn
+#model_params:
+#  n_neighbors: 5
+#  weights: uniform
+
+
 # Cross-validation configuration
 cv_folds: 5
 cv_strategy: stratified
@@ -91,10 +98,19 @@ logging_level: INFO
 ensemble:
   use: true
   model_list:
-#    - name: lightgbm
-#      params: { num_leaves: 31, min_child_samples: 20, subsample: 0.9, feature_fraction: 0.9, learning_rate: 0.05, n_estimators: 1000 }
+    #    - name: hgb
+    #      params: { max_iter: 300, learning_rate: 0.07, random_state: 42 }
+    #    - name: knn
+    #      params: { n_neighbors: 21, weights: distance }
+    #    - name: extra_trees
+    #      params: { n_estimators: 500, random_state: 42 }
     - name: catboost
       params: { iterations: 337, learning_rate: 0.011597947232020168, depth: 10, l2_leaf_reg: 2.392640911001029, bagging_temperature: 0.9980995133299302, loss_function: Logloss, auto_class_weights: Balanced }
+#    - name: lightgbm
+#      params: { num_leaves: 31, min_child_samples: 20, subsample: 0.9, feature_fraction: 0.9, learning_rate: 0.05, n_estimators: 1000 }
+#    - name: xgboost
+#      params: { n_estimators: 453, max_depth: 9, learning_rate: 0.14515585116869492, subsample: 0.7006075955571237, colsample_bytree: 0.8410144763171868,
+#                reg_alpha: 0.6797709737547473, reg_lambda: 0.9453885209468716, min_child_weight: 7, random_state: 42 }
     - name: gradient_boosting
       params: { n_estimators: 84, learning_rate: 0.1326731327153492, max_depth: 3, min_samples_split: 4, min_samples_leaf: 2, subsample: 0.8348468611017669, random_state: 42 }
 #    - name: random_forest
