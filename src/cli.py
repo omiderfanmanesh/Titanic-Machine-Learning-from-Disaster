@@ -30,7 +30,7 @@ from features import create_feature_builder
 from modeling.model_registry import ModelRegistry
 from modeling.trainers import TitanicTrainer
 from eval.evaluator import TitanicEvaluator
-from infer.predictor import create_predictor, ModelLoader, TitanicPredictor
+from infer.predictor import create_predictor, TitanicPredictor
 from cv.folds import create_splits_with_validation
 from sklearn.base import clone
 
@@ -65,7 +65,6 @@ def diagnose():
     """Diagnose environment, data availability, and config toggles."""
     try:
         import importlib
-        from pathlib import Path
 
         click.echo("🩺 Environment & Pipeline Diagnosis")
 
@@ -105,7 +104,7 @@ def diagnose():
                 off = [k for k, v in toggles.items() if not v]
                 click.echo(f"   🔌 Toggles ON: {on}")
                 click.echo(f"   🔌 Toggles OFF: {off}")
-        except Exception as e:
+        except Exception:
             click.echo(f"   ⚠️  Could not load data config: {e}")
 
         # Latest artifacts
@@ -187,7 +186,7 @@ def analyze(input_path: str, output_dir: str, minimal: bool):
     except Exception:
         try:
             from pandas_profiling import ProfileReport  # legacy name
-        except Exception as e:
+        except Exception:
             click.echo(
                 "❌ ydata-profiling is not importable. Install with:\n"
                 "   pip install ydata-profiling\n"
@@ -399,7 +398,7 @@ def features(experiment_config: str, data_config: str, features_config: Optional
         X_train_processed.to_csv(train_processed_path, index=False)
         X_test_processed.to_csv(test_processed_path, index=False)
 
-        click.echo(f"✅ Features built and saved:")
+        click.echo("✅ Features built and saved:")
         click.echo(f"   📁 Train: {train_processed_path} ({X_train_processed.shape})")
         click.echo(f"   📁 Test: {test_processed_path} ({X_test_processed.shape})")
 
@@ -512,7 +511,7 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
             from copy import deepcopy
 
             n_samples = len(X)
-            n_folds = len(splits)
+            # number of folds not used directly; fold_pipes carries fold info
             id_col = data_cfg.id_column
             target_col = data_cfg.target_column
 
@@ -637,7 +636,7 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
             predictor = TitanicPredictor({"ensemble_method": ens_method, "ensemble_weights": ens_weights})
             # Build a matrix of shape (n_models, n_samples) with NaNs where sample not in a model? OOFs are complete
             model_order = meta["ensemble"]["model_order"]
-            oof_stack = np.vstack([per_model_oof[m] for m in model_order])
+            # stack not used directly; combine within each fold for OOF
             # For each fold validation segment, combine across models
             ens_oof = np.zeros(n_samples, dtype=float)
             for fold_idx, (_, _, _, _, _, va_idx) in enumerate(fold_pipes):
@@ -739,12 +738,7 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
         # Allow training-related keys to come from data.yaml to keep configs in one place
         # If present in data.yaml, these override experiment values
         dc = data_config_dict  # original dict for raw access
-        cv_strategy_val = dc.get("cv_strategy", experiment_cfg.cv_strategy)
-        cv_folds_val = dc.get("cv_folds", experiment_cfg.cv_folds)
-        cv_shuffle_val = dc.get("cv_shuffle", experiment_cfg.cv_shuffle)
-        cv_random_state_val = dc.get("cv_random_state", experiment_cfg.cv_random_state)
-        cv_metric_val = dc.get("cv_metric", experiment_cfg.cv_metric)
-        group_column_val = dc.get("group_column", None)
+        # CV/train knobs are passed via trainer_config directly; no local copies needed
 
         # Pass data.yaml as CV/train config (config-driven, no inline trainer_config)
         trainer_config = data_config_dict
@@ -776,7 +770,7 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
 
         # Display results
         scores = cv_results["cv_scores"]
-        click.echo(f"✅ Training completed!")
+        click.echo("✅ Training completed!")
         click.echo(f"   📊 CV Score: {scores['mean_score']:.4f} ± {scores['std_score']:.4f}")
         click.echo(f"   📊 OOF Score: {scores['oof_score']:.4f}")
         click.echo(f"   📁 Artifacts: {cv_results['run_dir']}")
@@ -1282,7 +1276,7 @@ def predict(run_dir: tuple[str], inference_config: str, output_path: Optional[st
 
             # Print threshold details if requested
             if th_cfg.get("print", False):
-                click.echo(f"   📊 Threshold configuration:")
+                click.echo("   📊 Threshold configuration:")
                 click.echo(f"      Method: {th_cfg.get('method', 'accuracy')}")
                 click.echo(f"      Optimizer: {th_cfg.get('optimizer', False)}")
                 if th_cfg.get('method') == 'cost':
@@ -1506,7 +1500,7 @@ def submit(predictions_path: str, output_path: Optional[str], threshold: Optiona
         if used_src != "predictions.csv":
             click.echo(f"   📊 Labels derived from proba using: {used_src}")
         else:
-            click.echo(f"   ✅ Using binary predictions already present in predictions.csv")
+            click.echo("   ✅ Using binary predictions already present in predictions.csv")
 
         # 8) Optional remote submit
         if remote:
@@ -1551,13 +1545,13 @@ def info():
     click.echo(f"   📁 Data dir: {path_manager.data_dir}")
     click.echo(f"   📁 Artifacts dir: {path_manager.artifacts_dir}")
 
-    click.echo(f"\n🤖 Available models:")
+    click.echo("\n🤖 Available models:")
     registry = ModelRegistry()
     available_models = registry.get_available_models()
     for model in sorted(available_models):
         click.echo(f"   - {model}")
 
-    click.echo(f"\n📋 Configuration files:")
+    click.echo("\n📋 Configuration files:")
     if path_manager.config_dir.exists():
         config_files = list(path_manager.config_dir.glob("*.yaml"))
         for config_file in sorted(config_files):
