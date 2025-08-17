@@ -19,7 +19,7 @@ class FareTransform(BaseTransform):
         fare_col: str = "Fare",
         class_col: str = "Pclass",
         log_transform: bool = False,
-        output_col: str = "Fare_Transformed",
+        output_col: str = "Fare",
         exclude_zero_in_mean: bool = True,
     ):
         super().__init__()

@@ -121,6 +121,6 @@ class AgeImputeByTitleTransform(BaseTransform):
         # Fill the original age column in place (only where missing)
         # Preserve original non-missing values
         age_orig = pd.to_numeric(X[self.age_col], errors="coerce")
-        X[self.age_col] = age_orig.fillna(s_filled).astype(float)
+        X[self.age_col] = age_orig.fillna(s_filled).round().astype("int64")
 
         return X

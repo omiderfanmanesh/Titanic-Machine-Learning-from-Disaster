@@ -38,15 +38,23 @@ debug_n_rows: null
 #    random_state: 42
 
 # Add catboost model with specific parameters
-model_name: catboost
+#model_name: catboost
+#model_params:
+#  iterations: 337
+#  learning_rate: 0.011597947232020168
+#  depth: 10
+#  l2_leaf_reg: 2.392640911001029
+#  bagging_temperature: 0.9980995133299302
+
+# Add lightgbm model with num_leaves≈15–31, min_child_samples≈8–20, subsample≈0.9, feature_fraction≈0.9, lr≈0.03–0.06, n_estimators≈800–1500
+model_name: lightgbm
 model_params:
-  iterations: 337
-  learning_rate: 0.011597947232020168
-  depth: 10
-  l2_leaf_reg: 2.392640911001029
-  bagging_temperature: 0.9980995133299302
-
-
+    num_leaves: 31
+    min_child_samples: 20
+    subsample: 0.9
+    feature_fraction: 0.9
+    learning_rate: 0.05
+    n_estimators: 1000
 
 # Cross-validation configuration
 cv_folds: 5
@@ -67,6 +75,8 @@ logging_level: INFO
 ensemble:
   use: true
   model_list:
+#    - name: lightgbm
+#      params: { num_leaves: 31, min_child_samples: 20, subsample: 0.9, feature_fraction: 0.9, learning_rate: 0.05, n_estimators: 1000 }
     - name: catboost
       params: { iterations: 337, learning_rate: 0.011597947232020168, depth: 10, l2_leaf_reg: 2.392640911001029, bagging_temperature: 0.9980995133299302 }
     - name: gradient_boosting

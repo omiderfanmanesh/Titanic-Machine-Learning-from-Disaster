@@ -55,6 +55,7 @@ add_original_columns: false
 
 # Columns to drop from training/prediction if train_columns is not specified
 exclude_column_for_training:
+  - Cabin
   - Ticket_number
   - First_Middle
   - MaidenName
@@ -63,6 +64,8 @@ exclude_column_for_training:
   - Title_First_Middle
   - Title_Raw
   - IsAlone
+  - Age
+  - TicketGroupSize
 
 
 
@@ -132,8 +135,8 @@ imputation:
     debug: true
 
   per_column:
-    Age:
-      method: mean
+#    Age:
+#      method: mean
 #    Age:
 #      method: model
 #      estimator: random_forest
@@ -172,7 +175,7 @@ feature_engineering:
   post_impute:
     - TicketGroupTransform     # → TicketGroupSize (numeric)
     - FareTransform            # fix Fare==0 using class mean  then optional log to Fare_log
-#    - AgeBinningTransform      # → AgeBin (numeric)
+    - AgeBinningTransform      # → AgeBin (numeric)
 
 # Enable/disable individual transforms by class name
 feature_toggles:
@@ -180,9 +183,9 @@ feature_toggles:
   FamilySizeTransform: true
   TicketParseTransform: true
   DeckTransform: true
-  TicketGroupTransform: false
+  TicketGroupTransform: True
   FareTransform: true
-  AgeBinningTransform: false
+  AgeBinningTransform: true
   AgeImputeByTitleTransform: false  # Impute Age using Title + Pclass
 
  # =========================

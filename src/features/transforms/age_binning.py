@@ -60,7 +60,7 @@ class AgeBinningTransform(BaseTransform):
     # ---- helpers ----
     def _fill_ages(self, X: pd.DataFrame) -> pd.Series:
         """Return ages with NaNs filled using learned title means then global mean."""
-        s = pd.to_numeric(X[self.age_col], errors="coerce")
+        s = pd.to_numeric(X[self.age_col], errors="coerce").round()
 
         # If we weren't able to learn means, just return s
         if self.title_age_means_ is None and self.global_age_mean_ is None:
@@ -164,7 +164,7 @@ class AgeBinningTransform(BaseTransform):
             return X
 
         # 1) Fill ages by title mean -> global mean, then optionally round
-        s_filled = self._fill_ages(X)
+        s_filled = self._fill_ages(X).round()
 
         # (optional) keep the filled age column
         if self.output_filled_age_col:
