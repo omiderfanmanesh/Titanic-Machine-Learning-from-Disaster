@@ -42,6 +42,40 @@ early_stopping_rounds: null
 logging_level: "INFO"
 ```
 
+### Multi‑Model Ensemble (single run)
+
+You can train multiple models within a single run using a shared per‑fold feature pipeline. Add an `ensemble` block to `configs/experiment.yaml`:
+
+```yaml
+ensemble:
+  model_list:
+    - name: random_forest
+      params: { n_estimators: 400, max_depth: 8, random_state: 42 }
+    - name: xgboost
+      params: { n_estimators: 300, max_depth: 4, learning_rate: 0.08, subsample: 0.8, colsample_bytree: 0.8, random_state: 42 }
+  method: average     # average | weighted | rank_average | geometric_mean | median | max | min
+  weights: null       # optional weights aligned with model_list
+```
+
+Artifacts per run will include one pipeline per fold (`fold_i_feature_pipeline.joblib`), one model per type and fold (`fold_i_model_<name>.joblib`), OOF per model (`oof_<name>.csv`), an optional ensemble OOF (`oof_ensemble.csv`), and metadata (`ensemble_config.json`, `training_config.json`).
+
+### Stacking (Level‑2 Meta‑Learner)
+
+Enable a meta‑learner trained strictly on concatenated OOF probabilities:
+
+```yaml
+stacking:
+  use: true
+  meta_model:
+    name: logistic
+    params: { C: 1.0, max_iter: 1000 }
+```
+
+Training artifacts additionally include:
+- `meta_features_oof.csv` — columns `oof_<modelname>` per base model + target
+- `meta_model.joblib` — fitted meta‑learner
+- `meta_config.json` — meta model spec + base model order
+
 ### Available Models
 
 ```yaml
@@ -229,6 +263,34 @@ output_path: "artifacts/predictions.csv"
 submission_path: "artifacts/submission.csv"
 ```
 
+### Cross‑Run Ensembling (optional)
+
+To ensemble predictions from multiple independent training runs, specify a runs manifest in `configs/inference.yaml`:
+
+```yaml
+runs:
+  - path: artifacts/20250817-120713
+    weight: 0.6
+  - path: artifacts/20250817-121058
+    weight: 0.4
+
+ensemble_method: average      # average | weighted | rank_average | geometric_mean | median | max | min
+ensemble_weights: null        # used if runs[].weight not provided
+```
+
+CLI usage:
+
+```bash
+# With manifest
+python src/cli.py predict --inference-config inference
+
+# Or pass multiple run dirs explicitly
+python src/cli.py predict \
+  --run-dir artifacts/20250817-120713 \
+  --run-dir artifacts/20250817-121058 \
+  --inference-config inference
+```
+
 ### Ensemble Methods
 
 ```yaml
@@ -331,12 +393,23 @@ Robust behaviors:
 ```bash
 # Use a profile (merges configs/profiles/{fast,standard,full}.yaml)
 python src/cli.py train --profile fast
-
-# Inline override any key (supports dot-paths)
-python src/cli.py predict --set threshold.method=f1 --set threshold.optimizer=true
 ```
 
-Profiles provide quick presets (e.g., fewer folds for fast iterations). Inline `--set` helps tweak without editing YAML.
+Prefer keeping most knobs in a single file (configs/data.yaml). The train command now reads
+these training-related keys from data.yaml if present and uses them over experiment.yaml:
+
+```yaml
+# In configs/data.yaml
+cv_strategy: group           # stratified (default), group, kfold, timeseries
+cv_folds: 5
+cv_shuffle: true
+cv_random_state: 42
+cv_metric: accuracy          # accuracy, f1, or roc_auc
+group_column: FamilyID       # optional; if absent and strategy=group, groups are derived from Name+Ticket
+```
+
+You can still use `--set` for ad-hoc tweaks, but it’s optional now that the common
+training knobs live in data.yaml.
 
 
 # Rank Average (more robust to outliers)

@@ -30,7 +30,9 @@ from features import create_feature_builder
 from modeling.model_registry import ModelRegistry
 from modeling.trainers import TitanicTrainer
 from eval.evaluator import TitanicEvaluator
-from infer.predictor import create_predictor, ModelLoader
+from infer.predictor import create_predictor, ModelLoader, TitanicPredictor
+from cv.folds import create_splits_with_validation
+from sklearn.base import clone
 
 
 # Global objects
@@ -484,6 +486,245 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
         y = train_df[data_cfg.target_column]
         X = train_df.drop(columns=[data_cfg.target_column])
 
+        # If ensemble config is provided, run multi-model training in one run
+        ens_cfg = (getattr(experiment_cfg, "ensemble", None) or {})
+        model_list = ens_cfg.get("model_list") if isinstance(ens_cfg, dict) else getattr(ens_cfg, "model_list", [])
+        if model_list:
+            click.echo("🤝 Ensemble mode detected — training multiple models in one run")
+
+            # Create run directory up-front
+            run_path = path_manager.create_run_directory()
+            click.echo(f"   📁 Artifacts dir: {run_path}")
+
+            # Build per-fold pipelines once (reused across models)
+            feature_builder = create_feature_builder(data_cfg, debug=experiment_cfg.debug_mode)
+
+            # Create CV splits
+            splits, _ = create_splits_with_validation(X, y, {
+                "cv_strategy": data_config_dict.get("cv_strategy", experiment_cfg.cv_strategy),
+                "cv_folds": data_config_dict.get("cv_folds", experiment_cfg.cv_folds),
+                "cv_shuffle": data_config_dict.get("cv_shuffle", experiment_cfg.cv_shuffle),
+                "cv_random_state": data_config_dict.get("cv_random_state", experiment_cfg.cv_random_state),
+            })
+
+            import numpy as np
+            import joblib
+            from copy import deepcopy
+
+            n_samples = len(X)
+            n_folds = len(splits)
+            id_col = data_cfg.id_column
+            target_col = data_cfg.target_column
+
+            # Prepare structures for OOF per model
+            per_model_oof: dict[str, np.ndarray] = {}
+            per_model_fold_scores: dict[str, list[float]] = {}
+            fold_assign = np.full(n_samples, -1, dtype=int)
+
+            # Fit and save per-fold pipelines once
+            fold_pipes = []
+            for fold_idx, (tr_idx, va_idx) in enumerate(splits):
+                X_tr_raw, y_tr = X.iloc[tr_idx], y.iloc[tr_idx]
+                X_va_raw, y_va = X.iloc[va_idx], y.iloc[va_idx]
+
+                pipe = deepcopy(feature_builder)
+                pipe.fit(X_tr_raw, y_tr)
+                X_tr = pipe.transform(X_tr_raw)
+                X_va = pipe.transform(X_va_raw)
+
+                # Drop id/target if present
+                for col in (id_col, target_col):
+                    if col and col in X_tr.columns:
+                        X_tr = X_tr.drop(columns=[col])
+                    if col and col in X_va.columns:
+                        X_va = X_va.drop(columns=[col])
+
+                # Persist pipeline
+                pipe_path = run_path / f"fold_{fold_idx}_feature_pipeline.joblib"
+                joblib.dump(pipe, pipe_path)
+                fold_pipes.append((pipe_path, X_tr, y_tr, X_va, y_va, va_idx))
+                fold_assign[va_idx] = fold_idx
+
+            # Helper: scoring per configured metric
+            trainer_for_metric = TitanicTrainer(data_config_dict)
+
+            # Train each model on the same folds/pipelines
+            registry = ModelRegistry()
+            # Normalize specs for iteration and metadata
+            def _spec_to_pair(s):
+                if hasattr(s, 'name'):
+                    return s.name, dict(getattr(s, 'params', {}) or {})
+                elif isinstance(s, dict):
+                    return s.get('name'), dict(s.get('params', {}) or {})
+                else:
+                    return str(s), {}
+
+            model_specs_for_meta = []
+            for spec in model_list:
+                m_name, m_params = _spec_to_pair(spec)
+                model_specs_for_meta.append({"name": m_name, "params": m_params})
+                click.echo(f"\n🚀 Training model: {m_name}")
+
+                # Build estimator
+                wrapper = registry.create_model(m_name, m_params)
+                estimator = wrapper.build({"model_name": m_name, "model_params": m_params})
+
+                oof = np.zeros(n_samples, dtype=float)
+                fold_scores: list[float] = []
+
+                for fold_idx, (_, X_tr, y_tr, X_va, y_va, va_idx) in enumerate(fold_pipes):
+                    # Clone estimator per fold
+                    est_fold = clone(estimator)
+                    est_fold.fit(X_tr, y_tr)
+
+                    # Predict proba/logits
+                    try:
+                        proba = est_fold.predict_proba(X_va)
+                        fold_pred = proba[:, 1] if proba.ndim == 2 and proba.shape[1] > 1 else proba.ravel()
+                    except Exception:
+                        try:
+                            fold_pred = est_fold.decision_function(X_va)
+                        except Exception:
+                            fold_pred = est_fold.predict(X_va)
+
+                    # Save fold model
+                    model_path = run_path / f"fold_{fold_idx}_model_{m_name}.joblib"
+                    joblib.dump(est_fold, model_path)
+
+                    # Score
+                    score = trainer_for_metric._calculate_score(y_va, fold_pred)
+                    fold_scores.append(float(score))
+
+                    # Fill OOF
+                    oof[va_idx] = fold_pred
+
+                per_model_oof[m_name] = oof
+                per_model_fold_scores[m_name] = fold_scores
+
+                # Save OOF CSV for this model
+                oof_df = pd.DataFrame({
+                    "target": y.values,
+                    "prediction": oof,
+                    "fold": fold_assign
+                })
+                oof_df.to_csv(run_path / f"oof_{m_name}.csv", index=False)
+                click.echo(f"   📁 Saved OOF for {m_name}: oof_{m_name}.csv | CV {np.mean(fold_scores):.4f} ± {np.std(fold_scores):.4f}")
+
+            # Save ensemble config + metadata
+            ens_method = (ens_cfg.get("method") if isinstance(ens_cfg, dict) else getattr(ens_cfg, "method", "average")) or "average"
+            ens_weights = (ens_cfg.get("weights") if isinstance(ens_cfg, dict) else getattr(ens_cfg, "weights", None))
+            meta = {
+                "run_dir": str(run_path),
+                "timestamp": datetime.now().isoformat(),
+                "cv": {
+                    "strategy": data_config_dict.get("cv_strategy", experiment_cfg.cv_strategy),
+                    "folds": data_config_dict.get("cv_folds", experiment_cfg.cv_folds),
+                    "shuffle": data_config_dict.get("cv_shuffle", experiment_cfg.cv_shuffle),
+                    "random_state": data_config_dict.get("cv_random_state", experiment_cfg.cv_random_state),
+                    "metric": data_config_dict.get("cv_metric", experiment_cfg.cv_metric),
+                },
+                "models": model_specs_for_meta,
+                "ensemble": {
+                    "method": ens_method,
+                    "weights": ens_weights,
+                    "model_order": [ms["name"] for ms in model_specs_for_meta],
+                },
+            }
+            (run_path / "training_config.json").write_text(json.dumps(meta, indent=2))
+            (run_path / "ensemble_config.json").write_text(json.dumps(meta["ensemble"], indent=2))
+
+            # Compute ensemble OOF fold-wise (combine models within fold, then aggregate across folds implicitly via OOF)
+            predictor = TitanicPredictor({"ensemble_method": ens_method, "ensemble_weights": ens_weights})
+            # Build a matrix of shape (n_models, n_samples) with NaNs where sample not in a model? OOFs are complete
+            model_order = meta["ensemble"]["model_order"]
+            oof_stack = np.vstack([per_model_oof[m] for m in model_order])
+            # For each fold validation segment, combine across models
+            ens_oof = np.zeros(n_samples, dtype=float)
+            for fold_idx, (_, _, _, _, _, va_idx) in enumerate(fold_pipes):
+                fold_preds = [per_model_oof[m][va_idx] for m in model_order]
+                ens_fold = predictor._ensemble_predictions(fold_preds, ens_method, ens_weights)
+                ens_oof[va_idx] = np.clip(ens_fold, 0.0, 1.0)
+
+            # Save ensemble OOF CSV
+            ens_oof_df = pd.DataFrame({
+                "target": y.values,
+                "prediction": ens_oof,
+                "fold": fold_assign
+            })
+            ens_oof_df.to_csv(run_path / "oof_ensemble.csv", index=False)
+
+            # Compute ensemble CV scores using same metric; accuracy/F1 use 0.5 threshold inside trainer
+            fold_scores_ens = []
+            for fold_idx, (_, _, _, _, y_va, va_idx) in enumerate(fold_pipes):
+                s = trainer_for_metric._calculate_score(y_va, ens_oof[va_idx])
+                fold_scores_ens.append(float(s))
+
+            # Compute OOF score: if metric is AUC use roc_auc_score on full OOF; for accuracy/f1 threshold at 0.5 via trainer helper
+            from sklearn.metrics import roc_auc_score as _auc
+            metric_name = str(data_config_dict.get("cv_metric", experiment_cfg.cv_metric)).lower()
+            oof_score_val = float(_auc(y, ens_oof)) if metric_name == "roc_auc" else float(trainer_for_metric._calculate_score(y, ens_oof))
+
+            scores_payload = {
+                "fold_scores": fold_scores_ens,
+                "mean_score": float(np.mean(fold_scores_ens)),
+                "std_score": float(np.std(fold_scores_ens)),
+                "oof_score": oof_score_val
+            }
+            (run_path / "ensemble_cv_scores.json").write_text(json.dumps(scores_payload, indent=2))
+
+            # Optional: Stacking (meta-learner on OOF)
+            stacking_cfg = exp_config.get("stacking") or {}
+            use_stacking = bool(stacking_cfg.get("use", False))
+            if use_stacking:
+                # Build meta features (n_samples, n_models) in model_order
+                model_order = meta["ensemble"]["model_order"]
+                import numpy as _np
+                X_meta = _np.column_stack([per_model_oof[m] for m in model_order])
+                y_meta = y.values
+
+                # Save meta OOF features
+                import pandas as _pd
+                meta_oof_df = _pd.DataFrame(X_meta, columns=[f"oof_{m}" for m in model_order])
+                meta_oof_df['target'] = y_meta
+                meta_oof_df.to_csv(run_path / "meta_features_oof.csv", index=False)
+
+                # Create meta learner
+                meta_spec = stacking_cfg.get("meta_model") or {"name": "logistic", "params": {}}
+                meta_name = meta_spec.get("name", "logistic")
+                meta_params = meta_spec.get("params", {})
+                registry = ModelRegistry()
+                meta_wrapper = registry.create_model(meta_name, meta_params)
+                meta_est = meta_wrapper.build({"model_name": meta_name, "model_params": meta_params})
+                meta_est.fit(X_meta, y_meta)
+                # Save
+                import joblib as _joblib
+                _joblib.dump(meta_est, run_path / "meta_model.joblib")
+                (run_path / "meta_config.json").write_text(json.dumps({
+                    "meta_model": {"name": meta_name, "params": meta_params},
+                    "columns": model_order,
+                }, indent=2))
+                click.echo("   🧠 Stacking enabled: saved meta_model.joblib and meta_features_oof.csv")
+
+            # Update latest symlink
+            try:
+                latest = path_manager.artifacts_dir / "latest"
+                if latest.exists() or latest.is_symlink():
+                    try:
+                        latest.unlink()
+                    except Exception:
+                        pass
+                latest.symlink_to(run_path.resolve())
+                click.echo(f"   🔗 Updated artifacts/latest -> {run_path}")
+            except Exception:
+                pass
+
+            # Summary
+            click.echo("\n✅ Ensemble training completed!")
+            click.echo(f"   📁 Artifacts: {run_path}")
+            click.echo(f"   🤖 Models: {', '.join(model_order)}")
+            click.echo(f"   🧪 Ensemble OOF mean: {scores_payload['mean_score']:.4f} ± {scores_payload['std_score']:.4f}")
+            return
+
         # Create model
         model_config = {
             "model_name": experiment_cfg.model_name,
@@ -495,19 +736,18 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
         estimator = model_wrapper.build(model_config)
 
         # Create trainer
-        trainer_config = {
-            "strategy": experiment_cfg.cv_strategy,
-            "n_folds": experiment_cfg.cv_folds,
-            "shuffle": experiment_cfg.cv_shuffle,
-            "random_state": experiment_cfg.cv_random_state,
-            "cv_metric": experiment_cfg.cv_metric,
-            # Data identifiers for leak-safe dropping inside trainer
-            "id_column": data_cfg.id_column,
-            "target_column": data_cfg.target_column,
-            # Include model info for downstream artifact naming
-            "model_name": experiment_cfg.model_name,
-            "model_params": experiment_cfg.model_params
-        }
+        # Allow training-related keys to come from data.yaml to keep configs in one place
+        # If present in data.yaml, these override experiment values
+        dc = data_config_dict  # original dict for raw access
+        cv_strategy_val = dc.get("cv_strategy", experiment_cfg.cv_strategy)
+        cv_folds_val = dc.get("cv_folds", experiment_cfg.cv_folds)
+        cv_shuffle_val = dc.get("cv_shuffle", experiment_cfg.cv_shuffle)
+        cv_random_state_val = dc.get("cv_random_state", experiment_cfg.cv_random_state)
+        cv_metric_val = dc.get("cv_metric", experiment_cfg.cv_metric)
+        group_column_val = dc.get("group_column", None)
+
+        # Pass data.yaml as CV/train config (config-driven, no inline trainer_config)
+        trainer_config = data_config_dict
 
         trainer = TitanicTrainer(trainer_config)
 
@@ -706,8 +946,8 @@ def evaluate(run_dir: str):
         click.echo(f"❌ Evaluation failed: {e}")
 
 @cli.command()
-@click.option("--run-dir", type=click.Path(exists=True), required=True,
-              help="Training run directory")
+@click.option("--run-dir", type=click.Path(exists=True), multiple=True, required=False,
+              help="Training run directory (can be provided multiple times for cross-run ensembling)")
 @click.option("--inference-config", default="inference", help="Inference configuration name")
 @click.option("--output-path", type=click.Path(), help="Output path for predictions")
 @click.option("--threshold-file", type=click.Path(exists=True),
@@ -715,15 +955,16 @@ def evaluate(run_dir: str):
 @click.option("--threshold", "threshold_value", type=float,
               help="Numeric threshold override (e.g., 0.61)")
 @click.option("--set", "set_overrides", multiple=True, help="Override inference/data config values, e.g. key=value")
-def predict(run_dir: str, inference_config: str, output_path: Optional[str],
-            threshold_file: Optional[str], threshold_value: Optional[float], set_overrides: tuple[str] = ()): 
+@click.option("--verbose", is_flag=True, help="Print extra diagnostics (NaN counts, column summary)")
+def predict(run_dir: tuple[str], inference_config: str, output_path: Optional[str],
+            threshold_file: Optional[str], threshold_value: Optional[float], set_overrides: tuple[str] = (), verbose: bool = False): 
     """Generate predictions on test data."""
     try:
         from pathlib import Path
         import numpy as np
         import pandas as pd  # <-- ensure imported ONCE at top of function (or at module level)
 
-        run_path = Path(run_dir)
+        run_dirs_cli = list(run_dir) if run_dir else []
 
         # Load inference config
         inference_cfg = config_manager.load_config(inference_config)
@@ -753,84 +994,164 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str],
                     _set(inference_cfg, k, _parse_val(v))
         th_cfg = inference_cfg.get("threshold", {}) or {}
 
-        # Make run_dir available to the predictor for auto-discovery of artifacts
-        inference_cfg["run_dir"] = str(run_path)
-
-        # Ensure model paths
-        if not inference_cfg.get("model_paths"):
-            fold_models = sorted(run_path.glob("fold_*_model.joblib"))
-            inference_cfg["model_paths"] = [str(p) for p in fold_models]
-
-        # --- Resolve threshold source (file > numeric > best_threshold.txt > report > config.value) ---
-        used_src = "config"
-        if threshold_file:
-            th_cfg["file"] = str(threshold_file)
-            used_src = "cli:file"
-        elif threshold_value is not None:
-            th_cfg["value"] = float(threshold_value)
-            th_cfg.pop("file", None)
-            used_src = "cli:value"
+        # Build run list: CLI has priority; otherwise use inference_cfg.runs
+        run_specs = []
+        if run_dirs_cli:
+            run_specs = [{"path": p} for p in run_dirs_cli]
         else:
-            auto_file = run_path / "best_threshold.txt"
-            if auto_file.exists():
-                th_cfg["file"] = str(auto_file)
-                used_src = "auto:best_threshold.txt"
-            else:
-                # optional: read from threshold report in run_dir
-                report_file = run_path / "threshold_report.csv"
-                if report_file.exists():
-                    try:
-                        report_df = pd.read_csv(report_file)
-                        method = (th_cfg.get("method") or "accuracy").lower()
-                        if {"method", "threshold"}.issubset(report_df.columns):
-                            row = report_df.loc[report_df["method"].str.lower() == method]
-                            if not row.empty:
-                                threshold_value = row.iloc[0]["threshold"]
-                                if isinstance(threshold_value, pd.Series):
-                                    th_cfg["value"] = float(threshold_value.values[0])
-                                else:
-                                    th_cfg["value"] = float(threshold_value)
-                                used_src = f"auto:report[{method}]"
-                    except Exception as e:
-                        click.echo(f"⚠️ Could not read threshold from report: {e}")
+            runs_cfg = inference_cfg.get("runs") or []
+            if isinstance(runs_cfg, list):
+                for item in runs_cfg:
+                    if isinstance(item, dict) and item.get("path"):
+                        run_specs.append({"path": item["path"], "weight": item.get("weight")})
+        if not run_specs:
+            click.echo("❌ No run directories specified. Provide --run-dir or define runs in inference.yaml.")
+            return
 
-        inference_cfg["threshold"] = th_cfg
+        # Helper: compute final proba vector for a single run
+        def _predict_for_run(run_path: Path, predictor, inference_cfg_local: dict) -> np.ndarray:
+            # Make run_dir available only for single-run threshold discovery; we won't use it for multi-run threshold
+            inference_cfg_local = dict(inference_cfg_local)
+            inference_cfg_local["run_dir"] = str(run_path)
+            # Ensure model paths (single-model-per-fold fallback)
+            if not inference_cfg_local.get("model_paths"):
+                fold_models = sorted(run_path.glob("fold_*_model.joblib"))
+                inference_cfg_local["model_paths"] = [str(p) for p in fold_models]
 
-        # Prefer per-fold pipeline inference if available
-        predictor = create_predictor(inference_cfg)
-        fold_pipes = sorted(run_path.glob("fold_*_feature_pipeline.joblib"))
-        model_loader = ModelLoader()
-        models = model_loader.load_fold_models(run_dir)
-        click.echo(f"🔄 Loaded {len(models)} fold models")
+            fold_pipes = sorted(run_path.glob("fold_*_feature_pipeline.joblib"))
+            multi_model_detected = any(run_path.glob("fold_*_model_*.joblib"))
+            if multi_model_detected:
+                click.echo("🤝 Found multi-model-per-fold artifacts; using per-fold ensembling")
 
-        if fold_pipes and len(fold_pipes) == len(models):
-            # Load raw test
-            try:
-                data_cfg_dict = config_manager.load_config("data")
-                data_cfg_local = DataConfig(**data_cfg_dict)
-            except Exception as e:
-                click.echo(f"❌ Could not load data config for raw test path: {e}")
-                return
-            raw_test_path = Path(data_cfg_local.test_path)
-            if not raw_test_path.exists():
-                alt = Path('data') / raw_test_path.name
-                if alt.exists():
-                    raw_test_path = alt
-            if not raw_test_path.exists():
-                click.echo(f"❌ Raw test data not found at {data_cfg_local.test_path}")
-                return
-            test_raw_df = pd.read_csv(raw_test_path)
-            click.echo(f"📥 Loaded test data: {test_raw_df.shape}")
-
-            # Per-fold transform and predict
-            import joblib
-            per_fold_probs = []
-            for i, model in enumerate(models):
-                pipe_path = run_path / f"fold_{i}_feature_pipeline.joblib"
+            if fold_pipes and multi_model_detected:
+                # Load raw test
                 try:
-                    pipe = joblib.load(pipe_path)
+                    data_cfg_dict = config_manager.load_config("data")
+                    data_cfg_local = DataConfig(**data_cfg_dict)
+                except Exception as e:
+                    raise RuntimeError(f"Could not load data config for raw test path: {e}")
+                raw_test_path = Path(data_cfg_local.test_path)
+                if not raw_test_path.exists():
+                    alt = Path('data') / raw_test_path.name
+                    if alt.exists():
+                        raw_test_path = alt
+                if not raw_test_path.exists():
+                    raise FileNotFoundError(f"Raw test data not found at {data_cfg_local.test_path}")
+                test_raw_df = pd.read_csv(raw_test_path)
+
+                # If a meta model exists and not disabled, use stacking
+                use_stacking = (inference_cfg_local.get("stacking", {}) or {}).get("use", True)
+                import joblib as _joblib
+                meta_model_path = run_path / "meta_model.joblib"
+                if use_stacking and meta_model_path.exists():
+                    # We need per-model averaged predictions across folds
+                    # Load model order if available
+                    model_order = None
+                    try:
+                        import json as _json
+                        ecfg = _json.loads((run_path / "ensemble_config.json").read_text())
+                        model_order = ecfg.get("model_order")
+                    except Exception:
+                        model_order = None
+
+                    # Collect per-model predictions for each fold, then average
+                    per_model_fold_preds: dict[str, list[np.ndarray]] = {}
+                    n_folds = len(fold_pipes)
+                    for i in range(n_folds):
+                        pipe_path = run_path / f"fold_{i}_feature_pipeline.joblib"
+                        pipe = _joblib.load(pipe_path)
+                        Xt = pipe.transform(test_raw_df)
+                        for col in (data_cfg_local.id_column, data_cfg_local.target_column):
+                            if col and col in Xt.columns:
+                                Xt = Xt.drop(columns=[col])
+                        Xt = Xt.select_dtypes(include=["number", "bool"]).replace([np.inf, -np.inf], np.nan).fillna(0)
+
+                        for mpath in sorted(run_path.glob(f"fold_{i}_model_*.joblib")):
+                            mname = mpath.stem.split("_model_")[-1]
+                            model = _joblib.load(mpath)
+                            raw = predictor._predict_single_model(model, Xt)
+                            proba = predictor._normalize_scores_to_proba(raw)
+                            per_model_fold_preds.setdefault(mname, []).append(proba)
+
+                    if not per_model_fold_preds:
+                        raise RuntimeError("No base model predictions produced for stacking")
+
+                    # Average across folds per model
+                    import numpy as _np
+                    model_names = model_order or sorted(per_model_fold_preds.keys())
+                    X_meta = _np.column_stack([
+                        _np.mean(_np.vstack(per_model_fold_preds[name]), axis=0) for name in model_names
+                    ])
+                    meta_model = _joblib.load(meta_model_path)
+                    # Predict probabilities
+                    try:
+                        proba = meta_model.predict_proba(X_meta)
+                        final = proba[:, 1] if proba.ndim == 2 and proba.shape[1] > 1 else proba.ravel()
+                    except Exception:
+                        try:
+                            final = meta_model.decision_function(X_meta)
+                        except Exception:
+                            final = meta_model.predict(X_meta)
+                    return predictor._normalize_scores_to_proba(final)
+                else:
+                    # Per-fold transform and predict across model types, then average across folds
+                    per_fold_ensembled = []
+                    for i in range(len(fold_pipes)):
+                        pipe_path = run_path / f"fold_{i}_feature_pipeline.joblib"
+                        pipe = _joblib.load(pipe_path)
+                        Xt = pipe.transform(test_raw_df)
+                        # Drop ID/target if present
+                        for col in (data_cfg_local.id_column, data_cfg_local.target_column):
+                            if col and col in Xt.columns:
+                                Xt = Xt.drop(columns=[col])
+                        Xt = Xt.select_dtypes(include=["number", "bool"]).replace([np.inf, -np.inf], np.nan).fillna(0)
+
+                        fold_model_paths = sorted(run_path.glob(f"fold_{i}_model_*.joblib"))
+                        if not fold_model_paths:
+                            continue
+                        fold_model_preds = []
+                        for mpath in fold_model_paths:
+                            model = _joblib.load(mpath)
+                            raw = predictor._predict_single_model(model, Xt)
+                            proba = predictor._normalize_scores_to_proba(raw)
+                            fold_model_preds.append(proba)
+                        if not fold_model_preds:
+                            continue
+                        fold_ens = predictor._ensemble_predictions(
+                            fold_model_preds,
+                            inference_cfg_local.get("ensemble_method", "average"),
+                            inference_cfg_local.get("ensemble_weights"),
+                        )
+                        per_fold_ensembled.append(np.clip(fold_ens, 0.0, 1.0))
+                    if not per_fold_ensembled:
+                        raise RuntimeError("All fold predictions failed with per-fold pipelines")
+                    return np.mean(np.vstack(per_fold_ensembled), axis=0)
+
+            elif fold_pipes:
+                # Single-model-per-fold path
+                from infer.predictor import ModelLoader as _ML
+                model_loader = _ML()
+                models = model_loader.load_fold_models(str(run_path))
+                # Load raw test
+                try:
+                    data_cfg_dict = config_manager.load_config("data")
+                    data_cfg_local = DataConfig(**data_cfg_dict)
+                except Exception as e:
+                    raise RuntimeError(f"Could not load data config for raw test path: {e}")
+                raw_test_path = Path(data_cfg_local.test_path)
+                if not raw_test_path.exists():
+                    alt = Path('data') / raw_test_path.name
+                    if alt.exists():
+                        raw_test_path = alt
+                if not raw_test_path.exists():
+                    raise FileNotFoundError(f"Raw test data not found at {data_cfg_local.test_path}")
+                test_raw_df = pd.read_csv(raw_test_path)
+                import joblib as _joblib
+                per_fold_probs = []
+                for i, model in enumerate(models):
+                    pipe_path = run_path / f"fold_{i}_feature_pipeline.joblib"
+                    pipe = _joblib.load(pipe_path)
                     Xt = pipe.transform(test_raw_df)
-                    # Drop ID/target if present
                     for col in (data_cfg_local.id_column, data_cfg_local.target_column):
                         if col and col in Xt.columns:
                             Xt = Xt.drop(columns=[col])
@@ -838,62 +1159,118 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str],
                     raw = predictor._predict_single_model(model, Xt)
                     proba = predictor._normalize_scores_to_proba(raw)
                     per_fold_probs.append(proba)
-                except Exception as e:
-                    predictor.logger.error(f"Fold {i} pipeline prediction failed: {e}")
-                    continue
-            if not per_fold_probs:
-                raise RuntimeError("All fold predictions failed with per-fold pipelines")
-            final_proba = predictor._ensemble_predictions(per_fold_probs, inference_cfg.get("ensemble_method", "average"), inference_cfg.get("ensemble_weights"))
-            final_proba = np.clip(final_proba, 0.0, 1.0)
-            thr = predictor._resolve_threshold(inference_cfg)
-            predictions = pd.DataFrame({
-                "PassengerId": test_raw_df["PassengerId"].values if "PassengerId" in test_raw_df.columns else np.arange(len(final_proba)),
-                "prediction_proba": final_proba,
-                "prediction": (final_proba >= thr).astype(int)
-            })
-        else:
-            # Fallback: use processed features CSV
-            processed_dir = path_manager.data_dir / "processed"
-            test_path = processed_dir / "test_features.csv"
-            if not test_path.exists():
-                click.echo("❌ Processed test data not found. Run 'features' command first.")
-                return
-            test_df = pd.read_csv(test_path)
-            click.echo(f"📥 Loaded test data: {test_df.shape}")
-            test_model_df = test_df.copy()
-            try:
-                data_config_dict = config_manager.load_config("data")
-                data_cfg_local = DataConfig(**data_config_dict)
-            except Exception:
-                data_cfg_local = None
-            if data_cfg_local and getattr(data_cfg_local, 'train_columns', None):
-                requested = list(data_cfg_local.train_columns or [])
-                keep_cols = [c for c in requested if c in test_model_df.columns]
-                missing = [c for c in requested if c not in test_model_df.columns]
-                if missing:
-                    click.echo(f"⚠️ Some train_columns missing in test data and will be ignored: {missing}")
-                if keep_cols:
-                    test_model_df = test_model_df[keep_cols]
+                if not per_fold_probs:
+                    raise RuntimeError("All fold predictions failed with per-fold pipelines")
+                return np.clip(predictor._ensemble_predictions(per_fold_probs, inference_cfg_local.get("ensemble_method", "average"), inference_cfg_local.get("ensemble_weights")), 0.0, 1.0)
+
+            else:
+                # Fallback to processed features
+                processed_dir = path_manager.data_dir / "processed"
+                test_path = processed_dir / "test_features.csv"
+                if not test_path.exists():
+                    raise FileNotFoundError("Processed test data not found. Run 'features' command first.")
+                test_df = pd.read_csv(test_path)
+                test_model_df = test_df.copy()
+                try:
+                    data_config_dict = config_manager.load_config("data")
+                    data_cfg_local = DataConfig(**data_config_dict)
+                except Exception:
+                    data_cfg_local = None
+                if data_cfg_local and getattr(data_cfg_local, 'train_columns', None):
+                    requested = list(data_cfg_local.train_columns or [])
+                    keep_cols = [c for c in requested if c in test_model_df.columns]
+                    if keep_cols:
+                        test_model_df = test_model_df[keep_cols]
+                    else:
+                        drop_cols = [c for c in ['Name','Ticket','Cabin'] if c in test_model_df.columns]
+                        if drop_cols:
+                            test_model_df = test_model_df.drop(columns=drop_cols)
                 else:
-                    drop_cols = [c for c in ["Name", "Ticket", "Cabin"] if c in test_model_df.columns]
+                    drop_cols = [c for c in ['Name','Ticket','Cabin'] if c in test_model_df.columns]
                     if drop_cols:
                         test_model_df = test_model_df.drop(columns=drop_cols)
-            else:
-                drop_cols = [c for c in ["Name", "Ticket", "Cabin"] if c in test_model_df.columns]
-                if drop_cols:
-                    test_model_df = test_model_df.drop(columns=drop_cols)
-            if data_cfg_local and getattr(data_cfg_local, 'exclude_column_for_training', None):
-                excl = [c for c in (data_cfg_local.exclude_column_for_training or []) if c in test_model_df.columns]
-                if excl:
-                    test_model_df = test_model_df.drop(columns=excl)
-            if "PassengerId" in test_model_df.columns:
-                test_model_df = test_model_df.set_index("PassengerId")
-            test_model_df = test_model_df.select_dtypes(include=["number", "bool"]).replace([np.inf, -np.inf], np.nan).fillna(0)
-            click.echo("🔮 Generating predictions...")
-            predictions = predictor.predict(test_model_df, models, inference_cfg)
+                if data_cfg_local and getattr(data_cfg_local, 'exclude_column_for_training', None):
+                    excl = [c for c in (data_cfg_local.exclude_column_for_training or []) if c in test_model_df.columns]
+                    if excl:
+                        test_model_df = test_model_df.drop(columns=excl)
+                if "PassengerId" in test_model_df.columns:
+                    test_model_df = test_model_df.set_index("PassengerId")
+                test_model_df = test_model_df.select_dtypes(include=["number", "bool"]).replace([np.inf, -np.inf], np.nan).fillna(0)
+                # Load models
+                from infer.predictor import ModelLoader as _ML
+                model_loader = _ML()
+                models = model_loader.load_fold_models(str(run_path))
+                proba_df = predictor.predict_proba(test_model_df, models, inference_cfg_local)
+                return proba_df["prediction_proba"].values
+
+        # Update inference_cfg with (possibly) overridden threshold config
+        # Note: in multi-run mode the chosen threshold will be resolved later without relying on a single run_dir
+        inference_cfg["threshold"] = th_cfg
+
+        # Predictor instance for ensembling helper
+        predictor = create_predictor(inference_cfg)
+
+        # Compute proba per run
+        run_probas = []
+        for r in run_specs:
+            rp = Path(r["path"]).resolve()
+            if not rp.exists():
+                click.echo(f"⚠️ Skipping missing run directory: {rp}")
+                continue
+            proba_vec = _predict_for_run(rp, predictor, inference_cfg)
+            run_probas.append(proba_vec)
+        if not run_probas:
+            click.echo("❌ No predictions produced from provided runs")
+            return
+
+        # Cross-run ensemble
+        run_weights = None
+        if all(isinstance(r, dict) and r.get("weight") is not None for r in run_specs):
+            run_weights = [float(r.get("weight")) for r in run_specs if Path(r["path"]).exists()]
+        final_proba = predictor._ensemble_predictions(run_probas, inference_cfg.get("ensemble_method", "average"), run_weights or inference_cfg.get("ensemble_weights"))
+        final_proba = np.clip(final_proba, 0.0, 1.0)
+
+        # Choose threshold: if exactly one run, allow artifact discovery; else use config/CLI-provided
+        if len(run_probas) == 1 and run_specs:
+            inference_cfg["run_dir"] = str(Path(run_specs[0]["path"]))
+        else:
+            inference_cfg.pop("run_dir", None)
+        thr = TitanicPredictor(inference_cfg)._resolve_threshold(inference_cfg)
+
+        # Build output dataframe (need PassengerId from raw test)
+        # Load raw test once (assumes all runs used same data config)
+        try:
+            data_cfg_dict = config_manager.load_config("data")
+            data_cfg_local = DataConfig(**data_cfg_dict)
+        except Exception as e:
+            click.echo(f"❌ Could not load data config for raw test path: {e}")
+            return
+        raw_test_path = Path(data_cfg_local.test_path)
+        if not raw_test_path.exists():
+            alt = Path('data') / raw_test_path.name
+            if alt.exists(): raw_test_path = alt
+        if not raw_test_path.exists():
+            click.echo(f"❌ Raw test data not found at {data_cfg_local.test_path}")
+            return
+        test_raw_df = pd.read_csv(raw_test_path)
+        predictions = pd.DataFrame({
+            "PassengerId": test_raw_df["PassengerId"].values if "PassengerId" in test_raw_df.columns else np.arange(len(final_proba)),
+            "prediction_proba": final_proba,
+            "prediction": (final_proba >= thr).astype(int)
+        })
 
         # Save predictions
-        pred_path = Path(output_path) if output_path else (run_path / "predictions.csv")
+        # Save predictions
+        if output_path:
+            pred_path = Path(output_path)
+        else:
+            # If one run → save inside that run; else create combined file next to first run
+            if run_specs:
+                base = Path(run_specs[0]["path"]).resolve()
+                fname = "predictions.csv" if len(run_probas) == 1 else "predictions_ensemble.csv"
+                pred_path = base / fname
+            else:
+                pred_path = Path("artifacts/predictions.csv")
         predictions.to_csv(pred_path, index=False)
         click.echo(f"✅ Predictions saved to {pred_path}")
 
@@ -901,7 +1278,7 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str],
         th_cfg = inference_cfg.get("threshold", {}) or {}
         try:
             used_thr = predictor._resolve_threshold(inference_cfg)
-            click.echo(f"   📊 Threshold source: {used_src} | value: {used_thr:.4f}")
+            click.echo(f"   📊 Threshold: {used_thr:.4f}")
 
             # Print threshold details if requested
             if th_cfg.get("print", False):

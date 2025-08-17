@@ -50,3 +50,16 @@ early_stopping_rounds: null
 
 # Logging
 logging_level: INFO
+
+# Optional: multi-model ensemble configuration for a single run
+# When provided, the trainer will train each model in this list and
+# save per-model OOF predictions and fold checkpoints. The predict
+# command will ensemble these models per-fold at inference time.
+ensemble:
+  model_list:
+    - name: random_forest
+      params: { n_estimators: 400, max_depth: 8, random_state: 42 }
+    - name: xgboost
+      params: { n_estimators: 300, max_depth: 4, learning_rate: 0.08, subsample: 0.8, colsample_bytree: 0.8, random_state: 42 }
+  method: average
+  weights: null

@@ -51,6 +51,54 @@ python src/cli.py train --set cv_folds=3 --set model_name=random_forest
 python src/cli.py predict --set threshold.method=f1 --set threshold.optimizer=true
 ```
 
+## Single‑Run Multi‑Model Ensemble
+
+Train multiple models in one run by adding `ensemble.model_list` to `configs/experiment.yaml` (see `configs/experiment_ensemble.yaml` for an example). Then run:
+
+```bash
+# Train all models listed under ensemble.model_list in one run
+python src/cli.py train --experiment-config experiment --data-config data
+
+# Predict (per-fold pipelines applied once; per-fold model types ensembled; then averaged across folds)
+python src/cli.py predict --run-dir artifacts/latest
+```
+
+Artifacts include: `fold_i_feature_pipeline.joblib`, `fold_i_model_<name>.joblib`, `oof_<name>.csv`, `oof_ensemble.csv`, and `ensemble_config.json`.
+
+## Cross‑Run Ensembling
+
+Combine predictions from multiple independent runs:
+
+```bash
+# Option A: Provide multiple run dirs
+python src/cli.py predict \
+  --run-dir artifacts/run_random_forest \
+  --run-dir artifacts/run_xgboost \
+  --inference-config inference
+
+# Option B: Use an inference manifest (configs/inference.yaml)
+# runs:
+#   - path: artifacts/run_random_forest
+#     weight: 0.6
+#   - path: artifacts/run_xgboost
+#     weight: 0.4
+python src/cli.py predict --inference-config inference
+```
+
+## Stacking (Optional)
+
+Train a meta‑learner on base models’ OOF predictions by enabling `stacking` in `configs/experiment.yaml`:
+
+```yaml
+stacking:
+  use: true
+  meta_model:
+    name: logistic
+    params: { C: 1.0 }
+```
+
+During predict, if a `meta_model.joblib` exists in the run directory, the system builds meta features from per‑model per‑fold predictions on RAW test, averages per model across folds, and feeds them to the meta model. Disable via `--set stacking.use=false` if you want to fall back to direct ensembling.
+
 ## Training Columns & Exclusions
 
 In `configs/data.yaml`:

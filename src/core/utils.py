@@ -187,6 +187,25 @@ class CacheKeyGenerator:
 
 
 # Configuration schemas using Pydantic
+class EnsembleModelSpec(BaseModel):
+    name: str
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+
+class EnsembleConfig(BaseModel):
+    model_list: List[EnsembleModelSpec] = Field(default_factory=list)
+    method: str = Field("average", description="average | weighted | rank_average | geometric_mean | median | max | min")
+    weights: Optional[List[float]] = None
+
+class MetaModelSpec(BaseModel):
+    name: str = "logistic"
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+class StackingConfig(BaseModel):
+    use: bool = False
+    meta_model: MetaModelSpec = Field(default_factory=MetaModelSpec)
+
+
 class ExperimentConfig(BaseModel):
     """Schema for experiment configuration."""
     model_config = {'protected_namespaces': ()}
@@ -195,8 +214,14 @@ class ExperimentConfig(BaseModel):
     debug_mode: bool = Field(False, description="Whether to run in debug mode")
     debug_n_rows: Optional[int] = Field(None, description="Number of rows for debug mode")
     
+    # Single-model baseline config (still supported)
     model_name: str = Field(..., description="Model name to use")
     model_params: Dict[str, Any] = Field(default_factory=dict, description="Model parameters")
+
+    # Optional: multi-model ensemble config
+    ensemble: Optional[EnsembleConfig] = None
+    # Optional: stacking config for meta-learner on OOF predictions
+    stacking: Optional[StackingConfig] = None
     
     cv_folds: int = Field(5, description="Number of cross-validation folds")
     cv_strategy: str = Field("stratified", description="CV strategy")
@@ -214,6 +239,7 @@ class InferenceConfig(BaseModel):
     model_paths: List[str] = Field(..., description="Paths to trained models")
     ensemble_method: str = Field("average", description="Ensemble method")
     ensemble_weights: Optional[List[float]] = Field(None, description="Ensemble weights")
+    runs: Optional[List[Dict[str, Any]]] = Field(None, description="Optional list of runs for cross-run ensembling: [{path, weight}]")
     
     use_tta: bool = Field(False, description="Whether to use test-time augmentation")
     tta_rounds: int = Field(5, description="Number of TTA rounds")
@@ -259,6 +285,14 @@ class DataConfig(BaseModel):
 
     # ---- Feature engineering stages ----
     feature_engineering: Dict[str, List[str]]
+
+    # ---- Cross-validation & training controls (optional, override experiment) ----
+    cv_strategy: Optional[str] = None           # stratified (default), group, kfold, timeseries
+    cv_folds: Optional[int] = None
+    cv_shuffle: Optional[bool] = None
+    cv_random_state: Optional[int] = None
+    cv_metric: Optional[str] = None             # accuracy, f1, or roc_auc
+    group_column: Optional[str] = None          # used only when cv_strategy == 'group'
 
     # ---- Feature toggles (per-transform) ----
     # Use transform class names as keys, boolean to enable/disable.

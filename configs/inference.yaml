@@ -11,6 +11,15 @@
 ensemble_method: average    # Options: average, rank_average, geometric_mean, median, max, min, single_best
 ensemble_weights: null          # Optional weights for weighted averaging [0.3, 0.4, 0.3] or null for equal weights
 
+# Optional: cross-run ensembling manifest (Stage 4)
+# If provided, predict can be called without --run-dir and will
+# ensemble predictions across these runs using the method/weights above
+# runs:
+#   - path: artifacts/20250817-120713
+#     weight: 0.6
+#   - path: artifacts/20250817-121058
+#     weight: 0.4
+
 # =============================================================================
 # TEST-TIME AUGMENTATION (TTA)
 # =============================================================================
