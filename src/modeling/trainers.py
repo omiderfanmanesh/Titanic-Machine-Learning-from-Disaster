@@ -72,14 +72,27 @@ class TitanicTrainer(ITrainer):
         
         # Create fold splitter
         splitter = FoldSplitterFactory.create_splitter(
-            cv_config.get("strategy", "stratified"),
-            n_splits=cv_config.get("n_folds", 5),
-            shuffle=cv_config.get("shuffle", True),
-            random_state=cv_config.get("random_state", 42)
+            cv_config.get("cv_strategy", cv_config.get("strategy", "stratified")),
+            n_splits=cv_config.get("cv_folds", cv_config.get("n_folds", 5)),
+            shuffle=cv_config.get("cv_shuffle", cv_config.get("shuffle", True)),
+            random_state=cv_config.get("cv_random_state", cv_config.get("random_state", 42))
         )
         
-        # Generate splits
-        splits = splitter.split(X, y)
+        # Optional: group-aware splitting (requires explicit group column)
+        groups = None
+        strategy = str(cv_config.get("cv_strategy", cv_config.get("strategy", "stratified")))
+        group_col = cv_config.get("group_column")
+        if strategy == "group":
+            if group_col and group_col in X.columns:
+                groups = X[group_col]
+            else:
+                raise ValueError("Group CV strategy selected but 'group_column' is not configured in data.yaml or missing from the raw data.")
+        
+        # Generate splits (pass groups only for group strategy)
+        if strategy == "group":
+            splits = splitter.split(X, y, groups=groups)
+        else:
+            splits = splitter.split(X, y)
         
         # Initialize tracking arrays
         self.oof_predictions = np.zeros(len(X))

@@ -33,6 +33,17 @@ encode_categorical: true
 scale_features: true
 feature_importance: true
 
+# =========================
+# CROSS-VALIDATION & TRAINING (optional)
+# When provided here, these override experiment.yaml for convenience.
+# =========================
+cv_strategy: stratified       # stratified (default), group, kfold, timeseries
+cv_folds: 5
+cv_shuffle: true
+cv_random_state: 42
+cv_metric: f1                 # accuracy, f1, or roc_auc
+# group_column: FamilyID      # only if using cv_strategy: group and you have this column in RAW data
+
 # Include original raw columns in final dataset (alongside engineered/encoded)
 add_original_columns: false
 

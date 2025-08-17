@@ -260,6 +260,14 @@ class DataConfig(BaseModel):
     # ---- Feature engineering stages ----
     feature_engineering: Dict[str, List[str]]
 
+    # ---- Cross-validation & training controls (optional, override experiment) ----
+    cv_strategy: Optional[str] = None           # stratified (default), group, kfold, timeseries
+    cv_folds: Optional[int] = None
+    cv_shuffle: Optional[bool] = None
+    cv_random_state: Optional[int] = None
+    cv_metric: Optional[str] = None             # accuracy, f1, or roc_auc
+    group_column: Optional[str] = None          # used only when cv_strategy == 'group'
+
     # ---- Feature toggles (per-transform) ----
     # Use transform class names as keys, boolean to enable/disable.
     # Example:

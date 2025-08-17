@@ -495,19 +495,18 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
         estimator = model_wrapper.build(model_config)
 
         # Create trainer
-        trainer_config = {
-            "strategy": experiment_cfg.cv_strategy,
-            "n_folds": experiment_cfg.cv_folds,
-            "shuffle": experiment_cfg.cv_shuffle,
-            "random_state": experiment_cfg.cv_random_state,
-            "cv_metric": experiment_cfg.cv_metric,
-            # Data identifiers for leak-safe dropping inside trainer
-            "id_column": data_cfg.id_column,
-            "target_column": data_cfg.target_column,
-            # Include model info for downstream artifact naming
-            "model_name": experiment_cfg.model_name,
-            "model_params": experiment_cfg.model_params
-        }
+        # Allow training-related keys to come from data.yaml to keep configs in one place
+        # If present in data.yaml, these override experiment values
+        dc = data_config_dict  # original dict for raw access
+        cv_strategy_val = dc.get("cv_strategy", experiment_cfg.cv_strategy)
+        cv_folds_val = dc.get("cv_folds", experiment_cfg.cv_folds)
+        cv_shuffle_val = dc.get("cv_shuffle", experiment_cfg.cv_shuffle)
+        cv_random_state_val = dc.get("cv_random_state", experiment_cfg.cv_random_state)
+        cv_metric_val = dc.get("cv_metric", experiment_cfg.cv_metric)
+        group_column_val = dc.get("group_column", None)
+
+        # Pass data.yaml as CV/train config (config-driven, no inline trainer_config)
+        trainer_config = data_config_dict
 
         trainer = TitanicTrainer(trainer_config)
 
@@ -715,8 +714,9 @@ def evaluate(run_dir: str):
 @click.option("--threshold", "threshold_value", type=float,
               help="Numeric threshold override (e.g., 0.61)")
 @click.option("--set", "set_overrides", multiple=True, help="Override inference/data config values, e.g. key=value")
+@click.option("--verbose", is_flag=True, help="Print extra diagnostics (NaN counts, column summary)")
 def predict(run_dir: str, inference_config: str, output_path: Optional[str],
-            threshold_file: Optional[str], threshold_value: Optional[float], set_overrides: tuple[str] = ()): 
+            threshold_file: Optional[str], threshold_value: Optional[float], set_overrides: tuple[str] = (), verbose: bool = False): 
     """Generate predictions on test data."""
     try:
         from pathlib import Path
@@ -834,6 +834,12 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str],
                     for col in (data_cfg_local.id_column, data_cfg_local.target_column):
                         if col and col in Xt.columns:
                             Xt = Xt.drop(columns=[col])
+                    if verbose:
+                        # Print NaN diagnostics before sanitize
+                        nan_counts = Xt.isna().sum()
+                        nan_counts = nan_counts[nan_counts > 0].sort_values(ascending=False)
+                        if not nan_counts.empty:
+                            click.echo(f"   🧪 Fold {i}: top NaN columns before sanitize:\n{nan_counts.head(10).to_string()}")
                     Xt = Xt.select_dtypes(include=["number", "bool"]).replace([np.inf, -np.inf], np.nan).fillna(0)
                     raw = predictor._predict_single_model(model, Xt)
                     proba = predictor._normalize_scores_to_proba(raw)
@@ -851,6 +857,9 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str],
                 "prediction_proba": final_proba,
                 "prediction": (final_proba >= thr).astype(int)
             })
+            if verbose:
+                import numpy as np
+                click.echo(f"   🔍 Per-fold proba summary → mean: {np.mean(final_proba):.4f}, std: {np.std(final_proba):.4f}, min: {np.min(final_proba):.4f}, max: {np.max(final_proba):.4f}")
         else:
             # Fallback: use processed features CSV
             processed_dir = path_manager.data_dir / "processed"
@@ -888,6 +897,11 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str],
                     test_model_df = test_model_df.drop(columns=excl)
             if "PassengerId" in test_model_df.columns:
                 test_model_df = test_model_df.set_index("PassengerId")
+            if verbose:
+                nan_counts = test_model_df.isna().sum()
+                nan_counts = nan_counts[nan_counts > 0].sort_values(ascending=False)
+                if not nan_counts.empty:
+                    click.echo(f"   🧪 NaN columns before sanitize:\n{nan_counts.head(10).to_string()}")
             test_model_df = test_model_df.select_dtypes(include=["number", "bool"]).replace([np.inf, -np.inf], np.nan).fillna(0)
             click.echo("🔮 Generating predictions...")
             predictions = predictor.predict(test_model_df, models, inference_cfg)

@@ -331,12 +331,23 @@ Robust behaviors:
 ```bash
 # Use a profile (merges configs/profiles/{fast,standard,full}.yaml)
 python src/cli.py train --profile fast
-
-# Inline override any key (supports dot-paths)
-python src/cli.py predict --set threshold.method=f1 --set threshold.optimizer=true
 ```
 
-Profiles provide quick presets (e.g., fewer folds for fast iterations). Inline `--set` helps tweak without editing YAML.
+Prefer keeping most knobs in a single file (configs/data.yaml). The train command now reads
+these training-related keys from data.yaml if present and uses them over experiment.yaml:
+
+```yaml
+# In configs/data.yaml
+cv_strategy: group           # stratified (default), group, kfold, timeseries
+cv_folds: 5
+cv_shuffle: true
+cv_random_state: 42
+cv_metric: accuracy          # accuracy, f1, or roc_auc
+group_column: FamilyID       # optional; if absent and strategy=group, groups are derived from Name+Ticket
+```
+
+You can still use `--set` for ad-hoc tweaks, but it’s optional now that the common
+training knobs live in data.yaml.
 
 
 # Rank Average (more robust to outliers)
