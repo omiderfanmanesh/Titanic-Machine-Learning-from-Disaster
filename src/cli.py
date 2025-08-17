@@ -574,6 +574,11 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
                 skip_model_due_to_nan = False
 
                 for fold_idx, (_, X_tr, y_tr, X_va, y_va, va_idx) in enumerate(fold_pipes):
+                    # Optional: imbalance handling on this fold's training split
+                    try:
+                        X_tr, y_tr = trainer_for_metric._apply_imbalance_sampling_if_enabled(X_tr, y_tr, fold_idx, model_name=m_name)
+                    except Exception as e:
+                        click.echo(f"   ⚠️  Imbalance sampling failed on fold {fold_idx}: {e}")
                     # Detailed NaN logging and skip if model can't handle NaNs
                     def _nan_report(df, lbl):
                         counts = df.isna().sum()
@@ -597,7 +602,19 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
                         break
                     # Clone estimator per fold
                     est_fold = clone(estimator)
-                    est_fold.fit(X_tr, y_tr)
+                    # Optional: class weighting
+                    try:
+                        est_fold, cw_sw = trainer_for_metric._prepare_class_weighting(est_fold, y_tr, model_name=m_name)
+                    except Exception:
+                        cw_sw = None
+                    # Fit with optional sample_weight
+                    try:
+                        if cw_sw is not None:
+                            est_fold.fit(X_tr, y_tr, sample_weight=cw_sw)
+                        else:
+                            est_fold.fit(X_tr, y_tr)
+                    except TypeError:
+                        est_fold.fit(X_tr, y_tr)
 
                     # Predict proba/logits
                     try:

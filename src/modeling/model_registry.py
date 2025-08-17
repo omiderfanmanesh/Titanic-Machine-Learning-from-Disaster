@@ -10,8 +10,13 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import (
+    RandomForestClassifier,
+    GradientBoostingClassifier,
+    HistGradientBoostingClassifier,
+    ExtraTreesClassifier,
+)
+from sklearn.linear_model import LogisticRegression, RidgeClassifier, SGDClassifier
 from sklearn.svm import SVC
 
 from core.interfaces import IModel
@@ -147,6 +152,59 @@ class GradientBoostingModel(BaseModel):
         return GradientBoostingClassifier(**default_params)
 
 
+class HistGradientBoostingModel(BaseModel):
+    """Histogram-based Gradient Boosting (robust, supports NaNs)."""
+
+    def _create_model(self, **params) -> BaseEstimator:
+        default_params = {
+            "learning_rate": 0.1,
+            "max_depth": None,
+            "max_iter": 200,
+            "random_state": 42,
+        }
+        default_params.update(params)
+        return HistGradientBoostingClassifier(**default_params)
+
+
+class ExtraTreesModel(BaseModel):
+    """Extremely Randomized Trees (robust, fast)."""
+
+    def _create_model(self, **params) -> BaseEstimator:
+        default_params = {
+            "n_estimators": 300,
+            "random_state": 42,
+            "max_depth": None,
+            "n_jobs": -1,
+        }
+        default_params.update(params)
+        return ExtraTreesClassifier(**default_params)
+
+
+class RidgeClassifierModel(BaseModel):
+    """Ridge Classifier with decision_function (works with AUC via sigmoid)."""
+
+    def _create_model(self, **params) -> BaseEstimator:
+        default_params = {
+            "alpha": 1.0,
+        }
+        default_params.update(params)
+        return RidgeClassifier(**default_params)
+
+
+class SGDLogisticModel(BaseModel):
+    """Linear SGD with logistic loss (has predict_proba in modern sklearn)."""
+
+    def _create_model(self, **params) -> BaseEstimator:
+        default_params = {
+            "loss": "log_loss",
+            "max_iter": 2000,
+            "tol": 1e-3,
+            "random_state": 42,
+        }
+        default_params.update(params)
+        return SGDClassifier(**default_params)
+
+
 class SVMModel(BaseModel):
     """Support Vector Machine model wrapper."""
     
@@ -243,6 +301,11 @@ class ModelRegistry:
             "logistic": LogisticRegressionModel,
             "random_forest": RandomForestModel,
             "gradient_boosting": GradientBoostingModel,
+            "hist_gradient_boosting": HistGradientBoostingModel,
+            "hgb": HistGradientBoostingModel,
+            "extra_trees": ExtraTreesModel,
+            "ridge": RidgeClassifierModel,
+            "sgd_logistic": SGDLogisticModel,
             "svm": SVMModel
         }
         

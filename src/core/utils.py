@@ -14,6 +14,11 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import yaml
 from pydantic import BaseModel, Field, root_validator
+try:
+    # Pydantic v2
+    from pydantic import model_validator  # type: ignore
+except Exception:  # pragma: no cover
+    model_validator = None  # fallback for type checkers
 
 
 class LoggerFactory:
@@ -220,7 +225,8 @@ class ExperimentConfig(BaseModel):
     debug_n_rows: Optional[int] = Field(None, description="Number of rows for debug mode")
     
     # Single-model baseline config (still supported)
-    model_name: str = Field(..., description="Model name to use")
+    # Single-model baseline config (optional when using ensemble)
+    model_name: Optional[str] = Field(None, description="Model name to use (omit when using ensemble)")
     model_params: Dict[str, Any] = Field(default_factory=dict, description="Model parameters")
 
     # Optional: multi-model ensemble config
@@ -236,6 +242,18 @@ class ExperimentConfig(BaseModel):
     early_stopping_rounds: Optional[int] = Field(None, description="Early stopping rounds")
     cv_metric: str = Field("accuracy", description="CV metric: accuracy, f1, or roc_auc")
     logging_level: str = Field("INFO", description="Logging level")
+
+    # Validate that either a single model is specified or ensemble.use with model_list
+    if model_validator is not None:
+        @model_validator(mode="after")
+        def _check_model_or_ensemble(self):  # type: ignore
+            if not self.model_name:
+                ens = self.ensemble
+                if not ens or not bool(getattr(ens, 'use', False)) or not ens.model_list:
+                    raise ValueError(
+                        "Either 'model_name' must be provided, or 'ensemble.use' must be true with a non-empty 'ensemble.model_list'."
+                    )
+            return self
 
 
 class InferenceConfig(BaseModel):

@@ -47,6 +47,32 @@ cv_metric: f1                 # accuracy, f1, or roc_auc
 # Include original raw columns in final dataset (alongside engineered/encoded)
 add_original_columns: false
 
+# =========================
+# IMBALANCE HANDLING (optional)
+# =========================
+# Simple binary-class balancing on the training split per fold.
+# enabled: true|false, method: downsample|upsample
+imbalance:
+  enabled: false
+  # strategy: downsample|upsample|random_under|random_over|smote|adasyn
+  strategy: downsample
+  # Optional extra parameters passed to imblearn samplers (if used)
+  # params:
+  #   sampling_strategy: auto
+  #   k_neighbors: 5
+
+# =========================
+# CLASS WEIGHTING (optional)
+# =========================
+# Alternative to resampling. If both imbalance.enabled and class_weight.enabled
+# are true, resampling is applied first, then class_weight/sample_weight.
+class_weight:
+  enabled: false
+  # scheme: balanced|custom
+  scheme: balanced
+  # Only used when scheme: custom
+  # weights: {0: 1.0, 1: 2.0}
+
 # Explicit feature list (optional). If provided, list PRE-ENCODING names
 # (e.g., Pclass, Sex, Embarked, Title, Age, Fare). The pipeline will include
 # those numeric columns directly and all encoded outputs derived from
@@ -67,6 +93,7 @@ exclude_column_for_training:
   - Age
   - TicketGroupSize
   - Deck
+  - Embarked
 
 
 

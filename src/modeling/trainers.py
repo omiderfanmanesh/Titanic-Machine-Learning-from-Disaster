@@ -166,6 +166,9 @@ class TitanicTrainer(ITrainer):
             fold_feature_pipeline = None
             X_train, X_val = X_train_raw, X_val_raw
 
+        # Optional: class imbalance handling on training split only
+        X_train, y_train = self._apply_imbalance_sampling_if_enabled(X_train, y_train, fold_idx)
+
         # Clone the model for this fold
         fold_model = clone(base_model)
         
@@ -194,8 +197,17 @@ class TitanicTrainer(ITrainer):
                 "See error logs for per-column details."
             )
 
-        # Train model on processed features
-        fold_model.fit(X_train, y_train)
+        # Train model on processed features (with optional sample_weight)
+        try:
+            # Optional: class weighting via sample_weight
+            fold_model, sample_weight = self._prepare_class_weighting(fold_model, y_train)
+            if sample_weight is not None:
+                fold_model.fit(X_train, y_train, sample_weight=sample_weight)
+            else:
+                fold_model.fit(X_train, y_train)
+        except TypeError:
+            # Some estimators don't accept sample_weight
+            fold_model.fit(X_train, y_train)
         
         # Make predictions on processed validation set
         val_pred = self._predict_proba(fold_model, X_val)
@@ -222,6 +234,200 @@ class TitanicTrainer(ITrainer):
             "model_path": str(fold_model_path),
             "pipeline_path": str(fold_pipeline_path) if fold_pipeline_path else None
         }
+
+    def _apply_imbalance_sampling_if_enabled(self, X_train: pd.DataFrame, y_train: pd.Series, fold_idx: int, model_name: Optional[str] = None) -> tuple[pd.DataFrame, pd.Series]:
+        """Apply simple downsampling or upsampling for binary imbalance if enabled in config.
+        Config keys (in data.yaml or trainer config):
+          imbalance:
+            enabled: true|false
+            strategy: random_under|random_over|downsample|upsample|smote|adasyn
+            params: {...}   # e.g., sampling_strategy, k_neighbors, random_state
+        """
+        imb = (self.config.get("imbalance") or {})
+        if not imb or not bool(imb.get("enabled", False)):
+            return X_train, y_train
+
+        strategy = str(imb.get("strategy", imb.get("method", "downsample"))).lower()
+        params = dict(imb.get("params", {}) or {})
+        # Determine class counts
+        vals, counts = np.unique(y_train.values, return_counts=True)
+        if len(vals) != 2:
+            self.logger.warning("Imbalance handling is only implemented for binary classification; skipping.")
+            return X_train, y_train
+        cls0, cls1 = int(vals[0]), int(vals[1])
+        n0, n1 = int(counts[0]), int(counts[1])
+        minority = cls0 if n0 <= n1 else cls1
+        majority = cls1 if minority == cls0 else cls0
+        n_min, n_maj = (n0, n1) if minority == cls0 else (n1, n0)
+
+        self.logger.info(
+            f"Fold {fold_idx+1}: Imbalance before sampling -> class {cls0}: {n0}, class {cls1}: {n1} (strategy={strategy}{' model='+model_name if model_name else ''})"
+        )
+
+        rng = np.random.default_rng(self.config.get("cv_random_state", 42))
+        idx_min = y_train.index[y_train == minority].to_numpy()
+        idx_maj = y_train.index[y_train == majority].to_numpy()
+
+        # Try imblearn-based strategies first if requested
+        if strategy in ("smote", "adasyn", "random_over", "random_under"):
+            try:
+                if strategy == "smote":
+                    from imblearn.over_sampling import SMOTE
+                    sampler = SMOTE(random_state=self.config.get("cv_random_state", 42), **params)
+                elif strategy == "adasyn":
+                    from imblearn.over_sampling import ADASYN
+                    sampler = ADASYN(random_state=self.config.get("cv_random_state", 42), **params)
+                elif strategy == "random_over":
+                    from imblearn.over_sampling import RandomOverSampler
+                    sampler = RandomOverSampler(random_state=self.config.get("cv_random_state", 42), **params)
+                else:
+                    from imblearn.under_sampling import RandomUnderSampler
+                    sampler = RandomUnderSampler(random_state=self.config.get("cv_random_state", 42), **params)
+
+                Xs, ys = sampler.fit_resample(X_train, y_train)
+                vals_after, counts_after = np.unique(ys.values, return_counts=True)
+                self.logger.info(
+                    f"Fold {fold_idx+1}: Imbalance after sampling -> {dict(zip(vals_after.astype(int), counts_after.astype(int)))}"
+                )
+                return Xs, ys
+            except Exception as e:
+                self.logger.warning(f"Imblearn strategy '{strategy}' failed ({e}); falling back to simple sampler")
+
+        # Fallback: internal simple up/down sampling
+        if strategy in ("downsample", "random_under"):
+            # Downsample majority to minority count
+            if n_maj > n_min and n_min > 0:
+                sel_maj = rng.choice(idx_maj, size=n_min, replace=False)
+                new_idx = np.concatenate([idx_min, sel_maj])
+            else:
+                new_idx = y_train.index.to_numpy()
+        elif strategy in ("upsample", "random_over"):
+            # Upsample minority to majority count
+            if n_maj > n_min and n_min > 0:
+                sel_min = rng.choice(idx_min, size=n_maj - n_min, replace=True)
+                new_idx = np.concatenate([idx_min, sel_min, idx_maj])
+            else:
+                new_idx = y_train.index.to_numpy()
+        else:
+            self.logger.warning(f"Unknown imbalance strategy '{strategy}'; skipping sampling.")
+            return X_train, y_train
+
+        # Shuffle indices to avoid ordering
+        rng.shuffle(new_idx)
+        Xs = X_train.loc[new_idx]
+        ys = y_train.loc[new_idx]
+        vals_after, counts_after = np.unique(ys.values, return_counts=True)
+        self.logger.info(
+            f"Fold {fold_idx+1}: Imbalance after sampling -> {dict(zip(vals_after.astype(int), counts_after.astype(int)))}"
+        )
+        return Xs, ys
+
+    # -----------------
+    # Class weighting
+    # -----------------
+    def _prepare_class_weighting(self, estimator: BaseEstimator, y_train: pd.Series, model_name: Optional[str] = None) -> tuple[BaseEstimator, Optional[np.ndarray]]:
+        """Optionally apply class weighting as an alternative to resampling.
+        Config:
+          class_weight:
+            enabled: true|false
+            scheme: balanced|custom
+            weights: {0: 1.0, 1: 2.0}
+        Returns possibly modified estimator and optional sample_weight array for fit().
+        """
+        cw_cfg = (self.config.get("class_weight") or {})
+        if not cw_cfg or not bool(cw_cfg.get("enabled", False)):
+            return estimator, None
+
+        scheme = str(cw_cfg.get("scheme", "balanced")).lower()
+        custom_weights = cw_cfg.get("weights") or {}
+
+        # Compute class counts
+        vals, counts = np.unique(y_train.values, return_counts=True)
+        if len(vals) != 2:
+            self.logger.warning("class_weight is only implemented for binary tasks; skipping.")
+            return estimator, None
+        cls0, cls1 = int(vals[0]), int(vals[1])
+        n0, n1 = int(counts[0]), int(counts[1])
+
+        # Heuristics for different libraries
+        params = {}
+        sample_weight: Optional[np.ndarray] = None
+
+        # sklearn-compatible 'class_weight'
+        try:
+            est_params = estimator.get_params() if hasattr(estimator, 'get_params') else {}
+        except Exception:
+            est_params = {}
+
+        if 'class_weight' in est_params:
+            if scheme == 'balanced':
+                params['class_weight'] = 'balanced'
+            elif scheme == 'custom' and custom_weights:
+                # Ensure keys as ints
+                params['class_weight'] = {int(k): float(v) for k, v in custom_weights.items()}
+            try:
+                estimator.set_params(**params)
+                self.logger.info(f"Applied class_weight to estimator ({params.get('class_weight')})")
+                return estimator, None
+            except Exception as e:
+                self.logger.warning(f"Failed to set class_weight on estimator: {e}")
+
+        # xgboost / lightgbm / catboost mapping
+        est_mod = getattr(estimator.__class__, '__module__', '')
+        if 'xgboost' in est_mod:
+            try:
+                # scale_pos_weight = n_negative / n_positive for positive class 1
+                pos = n1 if cls1 == 1 else n0
+                neg = n0 if cls1 == 1 else n1
+                spw = float(neg) / float(pos) if pos > 0 else 1.0
+                estimator.set_params(scale_pos_weight=spw)
+                self.logger.info(f"Applied XGBoost scale_pos_weight={spw:.4f}")
+                return estimator, None
+            except Exception:
+                pass
+        if 'lightgbm' in est_mod:
+            try:
+                # Prefer class_weight dict if supported
+                if 'class_weight' in est_params:
+                    estimator.set_params(class_weight={cls0: 1.0, cls1: float(n0)/float(n1) if n1>0 else 1.0})
+                    self.logger.info("Applied LightGBM class_weight dict")
+                    return estimator, None
+                # Fallback to scale_pos_weight
+                pos = n1 if cls1 == 1 else n0
+                neg = n0 if cls1 == 1 else n1
+                spw = float(neg) / float(pos) if pos > 0 else 1.0
+                estimator.set_params(scale_pos_weight=spw)
+                self.logger.info(f"Applied LightGBM scale_pos_weight={spw:.4f}")
+                return estimator, None
+            except Exception:
+                pass
+        if 'catboost' in est_mod:
+            try:
+                # CatBoost uses class_weights=[w0, w1]
+                w0 = 1.0
+                w1 = float(n0)/float(n1) if n1 > 0 else 1.0
+                estimator.set_params(class_weights=[w0, w1] if cls0 == 0 else [w1, w0])
+                self.logger.info("Applied CatBoost class_weights")
+                return estimator, None
+            except Exception:
+                pass
+
+        # Generic sample_weight fallback for fit()
+        if scheme == 'balanced':
+            # Use sklearn's balanced formula: n_samples / (n_classes * n_i)
+            n = n0 + n1
+            w0 = n / (2.0 * n0) if n0 > 0 else 1.0
+            w1 = n / (2.0 * n1) if n1 > 0 else 1.0
+        elif scheme == 'custom' and custom_weights:
+            w0 = float(custom_weights.get(str(cls0), custom_weights.get(cls0, 1.0)))
+            w1 = float(custom_weights.get(str(cls1), custom_weights.get(cls1, 1.0)))
+        else:
+            w0 = w1 = 1.0
+
+        weights = {cls0: w0, cls1: w1}
+        sample_weight = y_train.map(weights).astype(float).values
+        self.logger.info(f"Prepared sample_weight fallback (w0={w0:.4f}, w1={w1:.4f})")
+        return estimator, sample_weight
 
     def _validate_no_val_leakage(self, feature_pipeline: ITransformer, X_val_raw: pd.DataFrame, fold_idx: int) -> None:
         """Validate that no transform was fitted on validation data."""
