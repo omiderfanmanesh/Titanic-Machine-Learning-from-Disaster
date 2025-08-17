@@ -238,6 +238,106 @@ ensemble_method: "average"
 # Weighted Average  
 ensemble_method: "weighted"
 ensemble_weights: [0.4, 0.3, 0.3]
+```
+
+## ✅ Practical Configuration (This Repo)
+
+This repository exposes additional, convenient knobs beyond the generic examples above.
+
+### Feature Engineering Pipeline (staged)
+
+```yaml
+feature_engineering:
+  pre_impute:
+    - TitleTransform           # → Title + name-derived fields
+    - FamilySizeTransform      # → FamilySize, IsAlone
+    - TicketParseTransform     # → Ticket_prefix, Ticket_number
+    - DeckTransform            # → Deck
+    - TicketGroupTransform     # → TicketGroupSize
+  post_impute:
+    - FareTransform            # optional log transform
+    - AgeBinningTransform      # → AgeBin
+
+# Enable/disable any transform by class name
+feature_toggles:
+  TitleTransform: true
+  FamilySizeTransform: true
+  TicketParseTransform: true
+  DeckTransform: true
+  TicketGroupTransform: true
+  FareTransform: true
+  AgeBinningTransform: true
+```
+
+### Encoding, Scaling, Missing
+
+```yaml
+handle_missing: true           # run imputation orchestrator
+encode_categorical: true       # run encoding orchestrator
+scale_features: true           # run scaling orchestrator
+
+# Imputation order — prevents Embarked __MISSING__ dummies
+imputation:
+  order: [Fare, Embarked, Age]
+```
+
+### Keep Originals (off by default)
+
+```yaml
+# If true, original raw columns are retained alongside engineered/encoded ones
+add_original_columns: false
+```
+
+### Include/Exclude Columns for Training
+
+Two ways to control which columns go into the model:
+
+```yaml
+# 1) Exclusion mode (recommended): dropped BEFORE encoding (so no dummies are created)
+exclude_column_for_training:
+  - Ticket_prefix      # base col (prevents generating any Ticket_prefix_* dummies)
+  - Ticket_number
+  - Surname
+  - First_Middle
+  - Title_First_Middle
+  - Title_Raw
+
+# 2) Inclusion mode (exact feature list): takes precedence over exclusion
+train_columns:
+  - AgeBin
+  - FamilySize
+  - IsAlone
+  - TicketGroupSize
+  - Sex_female
+  - Sex_male
+```
+
+Notes:
+- Exclusions are applied before encoding and also respected by feature importance. This prevents “extra” encoded columns from appearing.
+- If you supply `train_columns`, the training/prediction will use that exact set (and drop ID/target automatically).
+
+### Feature Importance
+
+Feature importance runs at the end of the `features` step when `feature_importance: true`.
+It writes CSVs, plots, and a text report to `artifacts/feature_importance/`.
+
+Robust behaviors:
+- Uses only numeric/bool features (sanitized; inf/NaN handled; constant columns dropped).
+- Cross-validated with accuracy; falls back to train accuracy if CV fails.
+- Algorithms: start with `random_forest` (add `xgboost`/`permutation` as desired).
+
+### Profiles and Inline Overrides
+
+```bash
+# Use a profile (merges configs/profiles/{fast,standard,full}.yaml)
+python src/cli.py train --profile fast
+
+# Inline override any key (supports dot-paths)
+python src/cli.py predict --set threshold.method=f1 --set threshold.optimizer=true
+```
+
+Profiles provide quick presets (e.g., fewer folds for fast iterations). Inline `--set` helps tweak without editing YAML.
+
 
 # Rank Average (more robust to outliers)
 ensemble_method: "rank_average"

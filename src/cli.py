@@ -148,8 +148,8 @@ def suggest_columns(top: int):
             "feature_importance_config": {
                 "enabled": True,
                 "algorithms": ["random_forest"],
-                "cross_validate": False,
-                "save_results": False,
+                "cross_validate": True,
+                "save_results": True,
             }
         })
         res = calc.calculate_importance(X, y)
@@ -165,6 +165,8 @@ def suggest_columns(top: int):
         click.echo("\nPaste into configs/data.yaml under train_columns or remove from exclude list.")
     except Exception as e:
         click.echo(f"❌ Suggest-columns failed: {e}")
+
+
 @click.option("--input-path", type=click.Path(exists=True), required=True,
               help="Path to the CSV to profile")
 @click.option("--output-dir", type=click.Path(), required=True,
@@ -460,55 +462,27 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
         # Set seed
         SeedManager.set_seed(experiment_cfg.seed)
 
-        # Load processed data
-        processed_dir = path_manager.data_dir / "processed"
-        train_path = processed_dir / "train_features.csv"
-
-        if not train_path.exists():
-            click.echo("❌ Processed training data not found. Run 'features' command first.")
+        # Load RAW training data for leak-safe per-fold feature processing
+        # Resolve raw path
+        raw_train_path = Path(data_cfg.train_path)
+        if not raw_train_path.exists():
+            alt = Path('data') / raw_train_path.name
+            if alt.exists():
+                raw_train_path = alt
+        if not raw_train_path.exists():
+            click.echo(f"❌ Raw training data not found at {data_cfg.train_path}")
             return
 
-        train_df = pd.read_csv(train_path)
+        train_df = pd.read_csv(raw_train_path)
 
         # Apply debug mode if needed
         if experiment_cfg.debug_mode and experiment_cfg.debug_n_rows:
             train_df = train_df.head(experiment_cfg.debug_n_rows)
             click.echo(f"🐛 Debug mode: Using {len(train_df)} training samples")
 
-        # Prepare data
-        # Drop target and ID columns for modeling
-        drop_for_training = [data_cfg.target_column]
-        if data_cfg.id_column in train_df.columns:
-            drop_for_training.append(data_cfg.id_column)
-
-        selected_cols: list[str] = []
-        # If train_columns is provided in data config, honor it
-        if getattr(data_cfg, 'train_columns', None):
-            requested = list(data_cfg.train_columns or [])
-            selected_cols = [c for c in requested if c not in drop_for_training and c in train_df.columns]
-            missing = [c for c in requested if c not in train_df.columns]
-            if missing:
-                click.echo(f"⚠️ Some requested training columns not found and will be ignored: {missing}")
-
-        if selected_cols:
-            X = train_df[selected_cols].copy()
-        else:
-            X = train_df.drop(columns=drop_for_training)
-            # Drop raw text / identifier columns not yet encoded if present
-            drop_cols = [c for c in ['Name', 'Ticket', 'Cabin'] if c in X.columns]
-            if drop_cols:
-                X = X.drop(columns=drop_cols)
-
-            # If exclusion list is provided, drop those columns if present
-            if getattr(data_cfg, 'exclude_column_for_training', None):
-                excl = [c for c in (data_cfg.exclude_column_for_training or []) if c in X.columns]
-                if excl:
-                    X = X.drop(columns=excl)
-                    click.echo(f"ℹ️ Dropped excluded training columns: {excl}")
-        # Fallback safety: keep only numeric/bool columns (avoids raw objects when originals are kept)
-        X = X.select_dtypes(include=["number", "bool"]) 
-
+        # Prepare raw X/y (builder handles transforms per fold)
         y = train_df[data_cfg.target_column]
+        X = train_df.drop(columns=[data_cfg.target_column])
 
         # Create model
         model_config = {
@@ -526,6 +500,10 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
             "n_folds": experiment_cfg.cv_folds,
             "shuffle": experiment_cfg.cv_shuffle,
             "random_state": experiment_cfg.cv_random_state,
+            "cv_metric": experiment_cfg.cv_metric,
+            # Data identifiers for leak-safe dropping inside trainer
+            "id_column": data_cfg.id_column,
+            "target_column": data_cfg.target_column,
             # Include model info for downstream artifact naming
             "model_name": experiment_cfg.model_name,
             "model_params": experiment_cfg.model_params
@@ -538,7 +516,9 @@ def train(experiment_config: str, data_config: str, profile: Optional[str], set_
         click.echo(f"   Model: {experiment_cfg.model_name}")
         click.echo(f"   Strategy: {experiment_cfg.cv_strategy}")
 
-        cv_results = trainer.cross_validate(estimator, X, y, trainer_config)
+        # Build feature builder for leak-safe per-fold processing
+        feature_builder = create_feature_builder(data_cfg, debug=experiment_cfg.debug_mode)
+        cv_results = trainer.cross_validate(estimator, X, y, trainer_config, feature_builder=feature_builder)
 
         # Update latest symlink
         try:
@@ -816,60 +796,101 @@ def predict(run_dir: str, inference_config: str, output_path: Optional[str],
 
         inference_cfg["threshold"] = th_cfg
 
-        # Load processed test data
-        processed_dir = path_manager.data_dir / "processed"
-        test_path = processed_dir / "test_features.csv"
-        if not test_path.exists():
-            click.echo("❌ Processed test data not found. Run 'features' command first.")
-            return
-        test_df = pd.read_csv(test_path)
-        click.echo(f"📥 Loaded test data: {test_df.shape}")
-
-        # Prepare model input (use training column selection if configured)
-        test_model_df = test_df.copy()
-        try:
-            data_config_dict = config_manager.load_config("data")
-            data_cfg = DataConfig(**data_config_dict)
-        except Exception:
-            data_cfg = None
-
-        if data_cfg and getattr(data_cfg, 'train_columns', None):
-            requested = list(data_cfg.train_columns or [])
-            keep_cols = [c for c in requested if c in test_model_df.columns]
-            missing = [c for c in requested if c not in test_model_df.columns]
-            if missing:
-                click.echo(f"⚠️ Some train_columns missing in test data and will be ignored: {missing}")
-            if keep_cols:
-                test_model_df = test_model_df[keep_cols]
-            else:
-                drop_cols = [c for c in ["Name", "Ticket", "Cabin"] if c in test_model_df.columns]
-                if drop_cols:
-                    test_model_df = test_model_df.drop(columns=drop_cols)
-        else:
-            drop_cols = [c for c in ["Name", "Ticket", "Cabin"] if c in test_model_df.columns]
-            if drop_cols:
-                test_model_df = test_model_df.drop(columns=drop_cols)
-
-        # Apply exclusion list to test as well (after optional selection/drop)
-        if data_cfg and getattr(data_cfg, 'exclude_column_for_training', None):
-            excl = [c for c in (data_cfg.exclude_column_for_training or []) if c in test_model_df.columns]
-            if excl:
-                test_model_df = test_model_df.drop(columns=excl)
-
-        if "PassengerId" in test_model_df.columns:
-            test_model_df = test_model_df.set_index("PassengerId")
-        # Fallback safety: keep only numeric/bool feature columns
-        test_model_df = test_model_df.select_dtypes(include=["number", "bool"]) 
-
-        # Load models
+        # Prefer per-fold pipeline inference if available
+        predictor = create_predictor(inference_cfg)
+        fold_pipes = sorted(run_path.glob("fold_*_feature_pipeline.joblib"))
         model_loader = ModelLoader()
         models = model_loader.load_fold_models(run_dir)
         click.echo(f"🔄 Loaded {len(models)} fold models")
 
-        # Predict (binary + proba)
-        predictor = create_predictor(inference_cfg)
-        click.echo("🔮 Generating predictions...")
-        predictions = predictor.predict(test_model_df, models, inference_cfg)
+        if fold_pipes and len(fold_pipes) == len(models):
+            # Load raw test
+            try:
+                data_cfg_dict = config_manager.load_config("data")
+                data_cfg_local = DataConfig(**data_cfg_dict)
+            except Exception as e:
+                click.echo(f"❌ Could not load data config for raw test path: {e}")
+                return
+            raw_test_path = Path(data_cfg_local.test_path)
+            if not raw_test_path.exists():
+                alt = Path('data') / raw_test_path.name
+                if alt.exists():
+                    raw_test_path = alt
+            if not raw_test_path.exists():
+                click.echo(f"❌ Raw test data not found at {data_cfg_local.test_path}")
+                return
+            test_raw_df = pd.read_csv(raw_test_path)
+            click.echo(f"📥 Loaded test data: {test_raw_df.shape}")
+
+            # Per-fold transform and predict
+            import joblib
+            per_fold_probs = []
+            for i, model in enumerate(models):
+                pipe_path = run_path / f"fold_{i}_feature_pipeline.joblib"
+                try:
+                    pipe = joblib.load(pipe_path)
+                    Xt = pipe.transform(test_raw_df)
+                    # Drop ID/target if present
+                    for col in (data_cfg_local.id_column, data_cfg_local.target_column):
+                        if col and col in Xt.columns:
+                            Xt = Xt.drop(columns=[col])
+                    Xt = Xt.select_dtypes(include=["number", "bool"]).replace([np.inf, -np.inf], np.nan).fillna(0)
+                    raw = predictor._predict_single_model(model, Xt)
+                    proba = predictor._normalize_scores_to_proba(raw)
+                    per_fold_probs.append(proba)
+                except Exception as e:
+                    predictor.logger.error(f"Fold {i} pipeline prediction failed: {e}")
+                    continue
+            if not per_fold_probs:
+                raise RuntimeError("All fold predictions failed with per-fold pipelines")
+            final_proba = predictor._ensemble_predictions(per_fold_probs, inference_cfg.get("ensemble_method", "average"), inference_cfg.get("ensemble_weights"))
+            final_proba = np.clip(final_proba, 0.0, 1.0)
+            thr = predictor._resolve_threshold(inference_cfg)
+            predictions = pd.DataFrame({
+                "PassengerId": test_raw_df["PassengerId"].values if "PassengerId" in test_raw_df.columns else np.arange(len(final_proba)),
+                "prediction_proba": final_proba,
+                "prediction": (final_proba >= thr).astype(int)
+            })
+        else:
+            # Fallback: use processed features CSV
+            processed_dir = path_manager.data_dir / "processed"
+            test_path = processed_dir / "test_features.csv"
+            if not test_path.exists():
+                click.echo("❌ Processed test data not found. Run 'features' command first.")
+                return
+            test_df = pd.read_csv(test_path)
+            click.echo(f"📥 Loaded test data: {test_df.shape}")
+            test_model_df = test_df.copy()
+            try:
+                data_config_dict = config_manager.load_config("data")
+                data_cfg_local = DataConfig(**data_config_dict)
+            except Exception:
+                data_cfg_local = None
+            if data_cfg_local and getattr(data_cfg_local, 'train_columns', None):
+                requested = list(data_cfg_local.train_columns or [])
+                keep_cols = [c for c in requested if c in test_model_df.columns]
+                missing = [c for c in requested if c not in test_model_df.columns]
+                if missing:
+                    click.echo(f"⚠️ Some train_columns missing in test data and will be ignored: {missing}")
+                if keep_cols:
+                    test_model_df = test_model_df[keep_cols]
+                else:
+                    drop_cols = [c for c in ["Name", "Ticket", "Cabin"] if c in test_model_df.columns]
+                    if drop_cols:
+                        test_model_df = test_model_df.drop(columns=drop_cols)
+            else:
+                drop_cols = [c for c in ["Name", "Ticket", "Cabin"] if c in test_model_df.columns]
+                if drop_cols:
+                    test_model_df = test_model_df.drop(columns=drop_cols)
+            if data_cfg_local and getattr(data_cfg_local, 'exclude_column_for_training', None):
+                excl = [c for c in (data_cfg_local.exclude_column_for_training or []) if c in test_model_df.columns]
+                if excl:
+                    test_model_df = test_model_df.drop(columns=excl)
+            if "PassengerId" in test_model_df.columns:
+                test_model_df = test_model_df.set_index("PassengerId")
+            test_model_df = test_model_df.select_dtypes(include=["number", "bool"]).replace([np.inf, -np.inf], np.nan).fillna(0)
+            click.echo("🔮 Generating predictions...")
+            predictions = predictor.predict(test_model_df, models, inference_cfg)
 
         # Save predictions
         pred_path = Path(output_path) if output_path else (run_path / "predictions.csv")

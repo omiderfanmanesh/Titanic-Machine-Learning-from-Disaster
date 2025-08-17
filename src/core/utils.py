@@ -204,6 +204,7 @@ class ExperimentConfig(BaseModel):
     cv_random_state: int = Field(42, description="Random state for CV splits")
     
     early_stopping_rounds: Optional[int] = Field(None, description="Early stopping rounds")
+    cv_metric: str = Field("accuracy", description="CV metric: accuracy, f1, or roc_auc")
     logging_level: str = Field("INFO", description="Logging level")
 
 

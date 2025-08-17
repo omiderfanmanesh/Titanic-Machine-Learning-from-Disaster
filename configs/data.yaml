@@ -48,11 +48,12 @@ exclude_column_for_training:
   - Title_First_Middle
   - Title_Raw
 
+
 # Only keep the ID as passthrough
 skip_encoding_columns: [PassengerId]
 
 # Params used by transforms
-log_transform_fare: false
+log_transform_fare: true
 age_bins: 5
 rare_title_threshold: null
 # Optional explicit overrides for title normalization
@@ -94,7 +95,7 @@ encoding:
 # =========================
 imputation:
   # Impute in order: Fare -> Embarked -> Age
-  order: [Fare, Embarked, Age]
+  order: [ Embarked]
 
   # Skip ID/text/engineered categoricals; we don't need to fill them
   exclude: [PassengerId, Name, Ticket, Title, Deck, Surname, Title_First_Middle, Title_Raw, First_Middle, MaidenName, Ticket_prefix]
@@ -181,4 +182,4 @@ feature_importance_config:
     permutation:
       n_repeats: 10
       random_state: 42
-      scoring: "accuracy"
+      scoring: "roc_auc"  # or "accuracy", "roc_auc", etc.

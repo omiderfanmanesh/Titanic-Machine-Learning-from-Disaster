@@ -137,6 +137,16 @@ class TitanicTrainer(ITrainer):
             X_train = fold_feature_pipeline.transform(X_train_raw)
             X_val = fold_feature_pipeline.transform(X_val_raw)
 
+            # Drop id/target columns from transformed features to prevent leakage
+            id_col = self.config.get("id_column") or "PassengerId"
+            target_col = self.config.get("target_column") or "Survived"
+            drop_cols = [c for c in [id_col, target_col] if c in X_train.columns]
+            if drop_cols:
+                X_train = X_train.drop(columns=drop_cols)
+            drop_cols_val = [c for c in [id_col, target_col] if c in X_val.columns]
+            if drop_cols_val:
+                X_val = X_val.drop(columns=drop_cols_val)
+
             # Validation: ensure no transform was fitted on validation data
             self._validate_no_val_leakage(fold_feature_pipeline, X_val_raw, fold_idx)
         else:
@@ -195,9 +205,22 @@ class TitanicTrainer(ITrainer):
             raise RuntimeError(f"Fold {fold_idx + 1}: Feature pipeline validation failed: {e}") from e
 
     def _calculate_score(self, y_true: pd.Series, y_pred: np.ndarray) -> float:
-        """Calculate the evaluation score."""
-        from sklearn.metrics import roc_auc_score
-        return roc_auc_score(y_true, y_pred)
+        """Calculate the evaluation score based on configured cv_metric."""
+        from sklearn.metrics import roc_auc_score, accuracy_score, f1_score
+        metric = str(self.config.get("cv_metric", "roc_auc")).lower()
+        try:
+            if metric == "roc_auc":
+                return float(roc_auc_score(y_true, y_pred))
+            # For accuracy/f1, threshold probabilities at 0.5
+            y_bin = (np.asarray(y_pred).ravel() >= 0.5).astype(int)
+            if metric == "f1":
+                return float(f1_score(y_true, y_bin))
+            # default accuracy
+            return float(accuracy_score(y_true, y_bin))
+        except Exception:
+            # Fallback: accuracy at 0.5
+            y_bin = (np.asarray(y_pred).ravel() >= 0.5).astype(int)
+            return float(accuracy_score(y_true, y_bin))
 
     def _predict_proba(self, model: BaseEstimator, X: pd.DataFrame) -> np.ndarray:
         """Get prediction probabilities, handling different model types."""

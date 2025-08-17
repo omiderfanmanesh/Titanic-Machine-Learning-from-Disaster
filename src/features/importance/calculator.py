@@ -99,8 +99,18 @@ class FeatureImportanceCalculator:
             n_jobs=-1
         )
         
+        # Sanitize
+        Xs = X.select_dtypes(include=["number", "bool"]).replace([np.inf, -np.inf], np.nan).fillna(0)
+        if not Xs.empty:
+            std = Xs.std(numeric_only=True)
+            Xs = Xs[std[std > 0].index]
+        ys = y.astype(int)
+        if Xs.empty or len(np.unique(ys)) < 2:
+            self.logger.warning("Insufficient features or classes for RF importance; skipping")
+            return pd.DataFrame({"feature": X.columns, "importance": np.zeros(len(X.columns)), "rank": range(1, len(X.columns)+1)}), 0.0
+
         # Fit model
-        rf.fit(X, y)
+        rf.fit(Xs, ys)
         
         # Get importance scores
         importances = rf.feature_importances_
@@ -108,18 +118,23 @@ class FeatureImportanceCalculator:
         # Calculate cross-validation score
         cv_score = 0.0
         if self.cross_validate:
-            cv_scores = cross_val_score(
-                rf, X, y, cv=StratifiedKFold(n_splits=self.cv_folds, shuffle=True, random_state=self.random_state),
-                scoring="accuracy", n_jobs=-1
-            )
-            cv_score = cv_scores.mean()
+            try:
+                cv_scores = cross_val_score(
+                    rf, Xs, ys,
+                    cv=StratifiedKFold(n_splits=self.cv_folds, shuffle=True, random_state=self.random_state),
+                    scoring="accuracy", n_jobs=-1
+                )
+                cv_score = float(np.mean(cv_scores))
+            except Exception as e:
+                self.logger.warning(f"RF CV scoring failed: {e}")
+                cv_score = float(accuracy_score(ys, rf.predict(Xs)))
         
         # Create results DataFrame
         importance_df = pd.DataFrame({
-            "feature": feature_names,
+            "feature": list(Xs.columns),
             "importance": importances,
-            "rank": range(1, len(feature_names) + 1)
         }).sort_values("importance", ascending=False).reset_index(drop=True)
+        importance_df["rank"] = range(1, len(importance_df) + 1)
         
         importance_df["rank"] = range(1, len(importance_df) + 1)
         
@@ -143,7 +158,15 @@ class FeatureImportanceCalculator:
         )
         
         # Fit model
-        xgb_model.fit(X, y)
+        Xs = X.select_dtypes(include=["number", "bool"]).replace([np.inf, -np.inf], np.nan).fillna(0)
+        if not Xs.empty:
+            std = Xs.std(numeric_only=True)
+            Xs = Xs[std[std > 0].index]
+        ys = y.astype(int)
+        if Xs.empty or len(np.unique(ys)) < 2:
+            self.logger.warning("Insufficient features or classes for XGB importance; skipping")
+            return pd.DataFrame({"feature": X.columns, "importance": np.zeros(len(X.columns)), "rank": range(1, len(X.columns)+1)}), 0.0
+        xgb_model.fit(Xs, ys)
         
         # Get importance scores (gain-based)
         importances = xgb_model.feature_importances_
@@ -151,18 +174,23 @@ class FeatureImportanceCalculator:
         # Calculate cross-validation score
         cv_score = 0.0
         if self.cross_validate:
-            cv_scores = cross_val_score(
-                xgb_model, X, y, cv=StratifiedKFold(n_splits=self.cv_folds, shuffle=True, random_state=self.random_state),
-                scoring="accuracy", n_jobs=-1
-            )
-            cv_score = cv_scores.mean()
+            try:
+                cv_scores = cross_val_score(
+                    xgb_model, Xs, ys,
+                    cv=StratifiedKFold(n_splits=self.cv_folds, shuffle=True, random_state=self.random_state),
+                    scoring="accuracy", n_jobs=-1
+                )
+                cv_score = float(np.mean(cv_scores))
+            except Exception as e:
+                self.logger.warning(f"XGB CV scoring failed: {e}")
+                cv_score = float(accuracy_score(ys, xgb_model.predict(Xs)))
         
         # Create results DataFrame
         importance_df = pd.DataFrame({
-            "feature": feature_names,
+            "feature": list(Xs.columns),
             "importance": importances,
-            "rank": range(1, len(feature_names) + 1)
         }).sort_values("importance", ascending=False).reset_index(drop=True)
+        importance_df["rank"] = range(1, len(importance_df) + 1)
         
         importance_df["rank"] = range(1, len(importance_df) + 1)
         
@@ -182,11 +210,19 @@ class FeatureImportanceCalculator:
         )
         
         # Fit base estimator
-        base_estimator.fit(X, y)
+        Xs = X.select_dtypes(include=["number", "bool"]).replace([np.inf, -np.inf], np.nan).fillna(0)
+        if not Xs.empty:
+            std = Xs.std(numeric_only=True)
+            Xs = Xs[std[std > 0].index]
+        ys = y.astype(int)
+        if Xs.empty or len(np.unique(ys)) < 2:
+            self.logger.warning("Insufficient features or classes for permutation importance; skipping")
+            return pd.DataFrame({"feature": X.columns, "importance": np.zeros(len(X.columns)), "importance_std": np.zeros(len(X.columns)), "rank": range(1, len(X.columns)+1)}), 0.0
+        base_estimator.fit(Xs, ys)
         
         # Calculate permutation importance
         perm_importance = permutation_importance(
-            base_estimator, X, y,
+            base_estimator, Xs, ys,
             n_repeats=params.get("n_repeats", 10),
             random_state=params.get("random_state", self.random_state),
             scoring=params.get("scoring", "accuracy"),
@@ -196,19 +232,24 @@ class FeatureImportanceCalculator:
         # Calculate cross-validation score
         cv_score = 0.0
         if self.cross_validate:
-            cv_scores = cross_val_score(
-                base_estimator, X, y, cv=StratifiedKFold(n_splits=self.cv_folds, shuffle=True, random_state=self.random_state),
-                scoring="accuracy", n_jobs=-1
-            )
-            cv_score = cv_scores.mean()
+            try:
+                cv_scores = cross_val_score(
+                    base_estimator, Xs, ys,
+                    cv=StratifiedKFold(n_splits=self.cv_folds, shuffle=True, random_state=self.random_state),
+                    scoring="accuracy", n_jobs=-1
+                )
+                cv_score = float(np.mean(cv_scores))
+            except Exception as e:
+                self.logger.warning(f"Permutation CV scoring failed: {e}")
+                cv_score = float(accuracy_score(ys, base_estimator.predict(Xs)))
         
         # Create results DataFrame
         importance_df = pd.DataFrame({
-            "feature": feature_names,
+            "feature": list(Xs.columns),
             "importance": perm_importance.importances_mean,
             "importance_std": perm_importance.importances_std,
-            "rank": range(1, len(feature_names) + 1)
         }).sort_values("importance", ascending=False).reset_index(drop=True)
+        importance_df["rank"] = range(1, len(importance_df) + 1)
         
         importance_df["rank"] = range(1, len(importance_df) + 1)
         
@@ -216,27 +257,28 @@ class FeatureImportanceCalculator:
     
     def _save_results(self, results: Dict[str, pd.DataFrame]) -> None:
         """Save feature importance results to files."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
         
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         # Save individual algorithm results
         for algorithm, df in results.items():
-            filename = f"feature_importance_{algorithm}_{timestamp}.csv"
+            filename = f"feature_importance_{algorithm}_{ts}.csv"
             filepath = self.output_dir / filename
             df.to_csv(filepath, index=False)
             self.logger.info(f"Saved {algorithm} importance to {filepath}")
         
         # Save combined summary
-        self._save_combined_summary(results, timestamp)
+        self._save_combined_summary(results)
         
         # Save model scores
         scores_df = pd.DataFrame([
             {"algorithm": alg, "cv_score": score} 
             for alg, score in self.model_scores.items()
         ])
-        scores_file = self.output_dir / f"model_scores_{timestamp}.csv"
+        scores_file = self.output_dir / f"model_scores_{ts}.csv"
         scores_df.to_csv(scores_file, index=False)
         
-    def _save_combined_summary(self, results: Dict[str, pd.DataFrame], timestamp: str) -> None:
+    def _save_combined_summary(self, results: Dict[str, pd.DataFrame]) -> None:
         """Create and save a combined importance summary."""
         if not results:
             return
@@ -273,7 +315,7 @@ class FeatureImportanceCalculator:
             summary_data.append(row)
         
         summary_df = pd.DataFrame(summary_data).sort_values("avg_rank").reset_index(drop=True)
-        summary_file = self.output_dir / f"feature_importance_summary_{timestamp}.csv"
+        summary_file = self.output_dir / f"feature_importance_summary.csv"
         summary_df.to_csv(summary_file, index=False)
         
         self.logger.info(f"Saved combined summary to {summary_file}")

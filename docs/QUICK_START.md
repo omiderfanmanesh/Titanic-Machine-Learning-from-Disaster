@@ -1,20 +1,86 @@
 # Quick Start Guide
 
-Get up and running with the Titanic ML Pipeline in just 5 minutes!
+Get up and running with the Titanic ML Pipeline in minutes.
 
 ## Prerequisites
 
-- Python 3.8+
-- pip or conda package manager
-- Git (optional, for cloning)
+- Python 3.11+
+- pip or conda
+- Kaggle data in `data/raw/train.csv` and `data/raw/test.csv` (or use the `download` command if configured)
 
-## 🚀 Installation
+## Option A — Run via Python (no install)
 
-### 1. Clone the Repository (Optional)
 ```bash
-git clone https://github.com/omiderfanmanesh/Titanic-Machine-Learning-from-Disaster.git
-cd Titanic-Machine-Learning-from-Disaster
+# Build features (uses configs/experiment.yaml and configs/data.yaml)
+python src/cli.py features --experiment-config experiment --data-config data
+
+# Train (creates artifacts/<run> and updates artifacts/latest)
+python src/cli.py train --experiment-config experiment --data-config data
+
+# Predict using the latest run
+python src/cli.py predict --run-dir artifacts/latest
+
+# Diagnose environment & data
+python src/cli.py diagnose
 ```
+
+## Option B — Install local CLI
+
+```bash
+pip install -e .                 # base deps
+# Optional extras:
+# pip install -e .[boosting]     # xgboost/lightgbm/catboost
+# pip install -e .[encoders]     # category-encoders
+
+# Then use the CLI
+titanic diagnose
+titanic features --experiment-config experiment --data-config data
+titanic train --experiment-config experiment --data-config data
+titanic predict --run-dir artifacts/latest
+```
+
+## Profiles and Overrides
+
+```bash
+# Use a fast profile (fewer folds/features)
+python src/cli.py features --profile fast
+python src/cli.py train --profile fast
+
+# Inline overrides (dot-paths supported)
+python src/cli.py train --set cv_folds=3 --set model_name=random_forest
+python src/cli.py predict --set threshold.method=f1 --set threshold.optimizer=true
+```
+
+## Training Columns & Exclusions
+
+In `configs/data.yaml`:
+
+```yaml
+# Exclusions (applied before encoding; avoids generating dummies)
+exclude_column_for_training:
+  - Ticket_prefix
+  - Ticket_number
+  - Surname
+  - First_Middle
+  - Title_First_Middle
+  - Title_Raw
+
+# Or exact inclusion list (takes precedence)
+train_columns:
+  - AgeBin
+  - FamilySize
+  - IsAlone
+  - TicketGroupSize
+  - Sex_female
+  - Sex_male
+```
+
+## Feature Importance
+
+- Runs automatically at the end of `features` if `feature_importance: true`.
+- Outputs saved to `artifacts/feature_importance/` (CSVs, plots, text report).
+- Use the helper: `python src/cli.py suggest-columns --top 20` to print a compact training column list.
+
 
 ### 2. Install Dependencies
 ```bash
