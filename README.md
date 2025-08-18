@@ -111,6 +111,22 @@ data:
   validation_split: 0.2
 ```
 
+### Dimensionality Reduction (optional)
+
+You can enable PCA or TruncatedSVD after encoding and scaling by adding this block to `configs/data.yaml`:
+
+```yaml
+dimensionality_reduction:
+  enabled: true       # set to true to use it
+  method: pca         # pca | svd (TruncatedSVD)
+  n_components: 8     # or null + keep_variance: 0.95 for PCA
+  keep_variance: null # e.g., 0.95 to keep 95% variance (PCA only)
+  whiten: false       # PCA whitening (optional)
+  random_state: 42
+```
+
+When enabled, the feature builder trains the reducer on scaled features and returns reduced components (columns `dim_1..dim_k`) to the model. This integrates cleanly with the existing cross-validation trainer without leaking validation data.
+
 ## 🧪 Testing
 
 Comprehensive test suite with 80%+ coverage:

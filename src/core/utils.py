@@ -292,6 +292,8 @@ class DataConfig(BaseModel):
     scale_features: bool
     encode_categorical: bool
     feature_importance: bool = False  # Add feature importance switch
+    # Optional dimensionality reduction block (PCA/SVD)
+    dimensionality_reduction: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
     # ---- Other params used by transforms ----
     log_transform_fare: bool

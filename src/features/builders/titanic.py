@@ -10,6 +10,7 @@ from features.pipeline import build_pipeline_pre, build_pipeline_post
 from features.encoding.orchestrator import EncodingOrchestrator
 from features.missing.orchestrator import ImputationOrchestrator
 from features.scaling.scaler import ScalingOrchestrator
+from features.dimred import DimensionalityReducer
 
 # Import feature importance modules
 from features.importance import FeatureImportanceCalculator, FeatureImportanceVisualizer
@@ -22,7 +23,8 @@ class TitanicFeatureBuilder(ITransformer):
     3) FE (post-impute)  — from config.feature_engineering.post_impute
     4) Encoding          — config.encoding
     5) Scaling
-    6) Feature Importance — optional analysis after preprocessing
+    6) Dimensionality Reduction (optional)
+    7) Feature Importance — optional analysis after preprocessing
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -40,9 +42,11 @@ class TitanicFeatureBuilder(ITransformer):
         self.imputer = ImputationOrchestrator(self.config) if self.handle_missing else None
 
         self.scaler = ScalingOrchestrator(enable=self.config.get("scale_features", True), config=self.config)
+        self.reducer = DimensionalityReducer(self.config)
 
         self._is_fitted = False
         self._fitted_columns: Optional[List[str]] = None  # frozen post-encoding schema
+        self._reduced_columns: Optional[List[str]] = None  # final schema if reducer enabled
 
     # -------- fit --------
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "TitanicFeatureBuilder":
@@ -96,7 +100,28 @@ class TitanicFeatureBuilder(ITransformer):
         self.scaler.fit(Xt_enc)
         self._fitted_columns = Xt_enc.columns.tolist()
 
-        # 6) Calculate feature importance if enabled and target is available
+        # 6) Dimensionality Reduction (fit only; applied at transform-time)
+        try:
+            if getattr(self.reducer, "enabled", False):
+                # Fit PCA/SVD on scaled numeric features
+                Xt_scaled = self.scaler.transform(Xt_enc)
+                Zt = self.reducer.fit_transform(Xt_scaled, y)
+                self._reduced_columns = list(Zt.columns)
+                self.logger.info(
+                    f"Dimensionality reduction enabled: method={self.reducer.method}, output_dim={len(self._reduced_columns)}"
+                )
+            else:
+                self._reduced_columns = None
+        except Exception as e:
+            # Fail safe: disable reducer if it errors, to not block training
+            self.logger.error(f"Dimensionality reduction failed during fit: {e}. Disabling reducer for this run.")
+            try:
+                self.reducer.enabled = False
+            except Exception:
+                pass
+            self._reduced_columns = None
+
+        # 7) Calculate feature importance if enabled and target is available
         feature_importance_enabled = self.config.get("feature_importance", False)
         target_available = y is not None
 
@@ -150,6 +175,17 @@ class TitanicFeatureBuilder(ITransformer):
             Xt = Xt[self._fitted_columns]
 
         Xt = self.scaler.transform(Xt)
+
+        # Apply dimensionality reduction if enabled
+        if getattr(self.reducer, "enabled", False):
+            try:
+                pre_shape = Xt.shape
+                Xt = self.reducer.transform(Xt)
+                self.logger.info(
+                    f"🔻 Applied {self.reducer.method.upper()} reduction: {pre_shape[1]} → {Xt.shape[1]} features"
+                )
+            except Exception as e:
+                self.logger.error(f"Dimensionality reduction failed during transform: {e}. Returning scaled features.")
         self.logger.info(f"✅ Transformed data shape: {Xt.shape}")
         return Xt
 
@@ -198,6 +234,8 @@ class TitanicFeatureBuilder(ITransformer):
         return result
 
     def get_feature_names(self) -> List[str]:
+        if getattr(self.reducer, "enabled", False) and self._reduced_columns:
+            return list(self._reduced_columns)
         return list(self._fitted_columns or self.encoder.feature_names())
 
     def _get_final_columns(self, Xt: pd.DataFrame) -> List[str]:

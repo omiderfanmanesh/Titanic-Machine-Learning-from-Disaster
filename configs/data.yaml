@@ -30,8 +30,19 @@ categorical_columns: [Sex,Surname, Embarked, Pclass, Deck, Title,Ticket_number, 
 # =========================
 handle_missing: true
 encode_categorical: true
-scale_features: false
+scale_features: true
 feature_importance: true
+
+# =========================
+# DIMENSIONALITY REDUCTION (optional)
+# =========================
+dimensionality_reduction:
+  enabled: true          # Set true to enable (applies after scaling)
+  method: pca             # pca | svd
+  n_components: null         # int; or null with keep_variance for PCA
+  keep_variance: 0.95     # e.g., 0.95 to keep 95% variance (PCA only)
+  whiten: false           # PCA whitening
+  random_state: 42
 
 # =========================
 # CROSS-VALIDATION & TRAINING (optional)
