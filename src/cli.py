@@ -296,7 +296,7 @@ def validate(config: str) -> None:
 @click.option("--experiment-config", default="experiment", help="Experiment configuration name")
 @click.option("--data-config", default="data", help="Data configuration name")
 @click.option("--features-config", type=click.Path(exists=True), help="Path to features.yaml configuration file")
-@click.option("--profile", type=click.Choice(["fast","standard","full"]), help="Optional profile to merge")
+@click.option("--profile", type=click.Choice(["fast","standard","full","leaderboard","leaderboard_loo"]), help="Optional profile to merge")
 @click.option("--set", "set_overrides", multiple=True, help="Override config values, e.g. key=value. Supports dot paths.")
 def features(experiment_config: str, data_config: str, features_config: Optional[str], profile: Optional[str], set_overrides: tuple[str]):
     """Build features for training and test data."""
@@ -429,7 +429,7 @@ def features(experiment_config: str, data_config: str, features_config: Optional
 @cli.command()
 @click.option("--experiment-config", default="experiment", help="Experiment configuration name")
 @click.option("--data-config", default="data", help="Data configuration name")
-@click.option("--profile", type=click.Choice(["fast","standard","full"]), help="Optional profile to merge")
+@click.option("--profile", type=click.Choice(["fast","standard","full","leaderboard","leaderboard_loo"]), help="Optional profile to merge")
 @click.option("--set", "set_overrides", multiple=True, help="Override config values, e.g. key=value. Supports dot paths.")
 def train(experiment_config: str, data_config: str, profile: Optional[str], set_overrides: tuple[str]):
     """Train model with cross-validation."""

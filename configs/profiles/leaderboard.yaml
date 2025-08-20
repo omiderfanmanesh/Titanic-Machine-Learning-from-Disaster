@@ -1,0 +1,113 @@
+# Leaderboard-focused overrides for Titanic
+
+# CV settings tuned for Kaggle accuracy
+cv_folds: 5
+cv_metric: accuracy
+cv_strategy: stratified
+cv_shuffle: true
+cv_random_state: 42
+
+# Strengthen feature engineering pipeline (order comes from configs/data.yaml)
+feature_toggles:
+  TitleTransform: true
+  FamilyTransform: true
+  MarriedTransform: true
+  FamilySizeTransform: true
+  TicketParseTransform: true
+  TicketFrequencyTransform: true
+  DeckTransform: true
+  TicketGroupTransform: true
+  AgeImputeByTitleTransform: true
+  FareTransform: true          # enable log(Fare)
+  FareBinningTransform: true
+  AgeBinningTransform: true
+
+# Ensure critical columns are used (override drops from data.yaml)
+exclude_column_for_training:
+  - Cabin
+  - First_Middle
+  - MaidenName
+  - Surname
+  - Title_First_Middle
+  - Title_Raw
+  # Keep engineered/useful columns in (Embarked, Fare, Parch, SibSp, FamilySize, Is_Married, TicketGroupSize)
+
+# Columns to guide encoders (post-FE names)
+numeric_columns:
+  - Age
+  - SibSp
+  - Parch
+  - Fare
+  - Ticket_Frequency
+  - TicketGroupSize
+  - FamilySize
+  - Is_Married
+
+categorical_columns:
+  - Sex
+  - Embarked
+  - Pclass
+  - Deck
+  - Title
+  - AgeBin
+  - FamilySizeGrouped
+  - Ticket_prefix
+  - Family
+
+# Encoding strategy: one-hot for low-card; CatBoost/LOO for high-card
+encoding:
+  default:
+    method: onehot
+    handle_missing: "value"
+    handle_unknown: "ignore"
+  per_column:
+    Sex: { method: onehot }
+    Pclass: { method: onehot }
+    Embarked: { method: onehot }
+    Title: { method: onehot }
+    Deck: { method: onehot }
+    AgeBin: { method: onehot }
+    FamilySizeGrouped: { method: onehot }
+    Ticket_prefix: { method: catboost, a: 1.0 }
+    Family: { method: catboost, a: 1.0 }
+    # Keep Ticket_number out to avoid ID leakage/noise
+
+# Imputation tweaks kept minimal (Age via transform; ensure robust defaults)
+imputation:
+  default:
+    numeric: mean
+    categorical: constant
+    fill_value: "Unknown"
+    add_missing_indicators: false
+
+# Turn on standard knobs
+handle_missing: true
+encode_categorical: true
+scale_features: true
+feature_importance: true
+
+# Ensemble setup: strong simple blend aimed at 0.79–0.80 LB
+ensemble:
+  use: true
+  model_list:
+    - name: catboost
+      params:
+        iterations: 1200
+        depth: 4
+        learning_rate: 0.05
+        l2_leaf_reg: 5.0
+        random_seed: 42
+        verbose: false
+        # auto_class_weights: Balanced  # optional; try enabling if minority class underperforms
+    - name: hgb
+      params:
+        max_iter: 350
+        learning_rate: 0.06
+        max_depth: 4
+        random_state: 42
+    - name: logistic
+      params:
+        C: 1.2
+        random_state: 42
+  method: rank_average
+  weights: [0.6, 0.25, 0.15]

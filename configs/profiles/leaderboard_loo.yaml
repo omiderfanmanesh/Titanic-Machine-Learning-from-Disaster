@@ -1,0 +1,103 @@
+# Leaderboard-like profile with Leave-One-Out encoding for high-card features
+
+cv_folds: 5
+cv_metric: accuracy
+cv_strategy: stratified
+cv_shuffle: true
+cv_random_state: 42
+
+feature_toggles:
+  TitleTransform: true
+  FamilyTransform: true
+  MarriedTransform: true
+  FamilySizeTransform: true
+  TicketParseTransform: true
+  TicketFrequencyTransform: true
+  DeckTransform: true
+  TicketGroupTransform: true
+  AgeImputeByTitleTransform: true
+  FareTransform: true
+  FareBinningTransform: true
+  AgeBinningTransform: true
+
+exclude_column_for_training:
+  - Cabin
+  - First_Middle
+  - MaidenName
+  - Surname
+  - Title_First_Middle
+  - Title_Raw
+
+numeric_columns:
+  - Age
+  - SibSp
+  - Parch
+  - Fare
+  - Ticket_Frequency
+  - TicketGroupSize
+  - FamilySize
+  - Is_Married
+
+categorical_columns:
+  - Sex
+  - Embarked
+  - Pclass
+  - Deck
+  - Title
+  - AgeBin
+  - FamilySizeGrouped
+  - Ticket_prefix
+  - Family
+
+encoding:
+  default:
+    method: onehot
+    handle_missing: "value"
+    handle_unknown: "ignore"
+  per_column:
+    Sex: { method: onehot }
+    Pclass: { method: onehot }
+    Embarked: { method: onehot }
+    Title: { method: onehot }
+    Deck: { method: onehot }
+    AgeBin: { method: onehot }
+    FamilySizeGrouped: { method: onehot }
+    Ticket_prefix: { method: leave_one_out, sigma: 0.05 }
+    Family: { method: leave_one_out, sigma: 0.05 }
+
+imputation:
+  default:
+    numeric: mean
+    categorical: constant
+    fill_value: "Unknown"
+    add_missing_indicators: false
+
+handle_missing: true
+encode_categorical: true
+scale_features: true
+feature_importance: true
+
+ensemble:
+  use: true
+  model_list:
+    - name: catboost
+      params:
+        iterations: 1200
+        depth: 4
+        learning_rate: 0.05
+        l2_leaf_reg: 5.0
+        random_seed: 42
+        verbose: false
+    - name: hgb
+      params:
+        max_iter: 350
+        learning_rate: 0.06
+        max_depth: 4
+        random_state: 42
+    - name: logistic
+      params:
+        C: 1.2
+        random_state: 42
+  method: rank_average
+  weights: [0.6, 0.25, 0.15]
+
