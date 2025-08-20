@@ -3,117 +3,19 @@ seed: 42
 debug_mode: false
 debug_n_rows: null
 
-# Model configuration
-#model_name: random_forest
-#model_params:
-#  n_estimators: 800
-#  max_depth: 8
-#  min_samples_split: 5
-#  min_samples_leaf: 2
-#  random_state: 42
-#  n_jobs: -1
+model_name: logistic
+model_params:
+  penalty: l2
+  C: 1.0
+  solver: lbfgs
 
-# add gradient_boosting model with specific parameters
-#model_name: gradient_boosting
-#model_params:
-#  n_estimators: 84
-#  learning_rate: 0.1326731327153492
-#  max_depth: 3
-#  min_samples_split: 4
-#  min_samples_leaf: 2
-#  subsample: 0.8348468611017669
-#  random_state: 42
-
-#Add xgboost model with specific parameters
-#model_name: xgboost
-#model_params:
-#    n_estimators: 453
-#    max_depth: 9
-#    learning_rate: 0.14515585116869492
-#    subsample: 0.7006075955571237
-#    colsample_bytree: 0.8410144763171868
-#    reg_alpha: 0.6797709737547473
-#    reg_lambda: 0.9453885209468716
-#    min_child_weight: 7
-#    random_state: 42
-
-# Add catboost model with specific parameters
-#model_name: catboost
-#model_params:
-#  iterations: 337
-#  learning_rate: 0.011597947232020168
-#  depth: 10
-#  l2_leaf_reg: 2.392640911001029
-#  bagging_temperature: 0.9980995133299302
-#  loss_function: Logloss
-#  auto_class_weights: Balanced
-
-# Add lightgbm model with num_leaves≈15–31, min_child_samples≈8–20, subsample≈0.9, feature_fraction≈0.9, lr≈0.03–0.06, n_estimators≈800–1500
-#model_name: lightgbm
-#model_params:
-#    num_leaves: 31
-#    min_child_samples: 20
-#    subsample: 0.9
-#    feature_fraction: 0.9
-#    learning_rate: 0.05
-#    n_estimators: 1000
-
-# add logistic regression model with specific parameters
-#model_name: logistic_regression
-#model_params:
-#  penalty: l2
-#  C: 1.0
-#  solver: lbfgs
-
-# add SVM model with specific parameters
-#model_name: svm
-#model_params:
-#  kernel: rbf
-#  C: 1.0
-#  gamma: scale
-
-# add KNN model with specific parameters
-#model_name: knn
-#model_params:
-#  n_neighbors: 5
-#  weights: uniform
-
-
-# Cross-validation configuration
-cv_folds: 5
+cv_folds: 2
 cv_strategy: stratified
 cv_shuffle: true
 cv_random_state: 42
 
-# Training configuration
 early_stopping_rounds: null
-
-# Logging
 logging_level: INFO
 
-# Optional: multi-model ensemble configuration for a single run
-# When provided, the trainer will train each model in this list and
-# save per-model OOF predictions and fold checkpoints. The predict
-# command will ensemble these models per-fold at inference time.
 ensemble:
-  use: true
-  model_list:
-    #    - name: hgb
-    #      params: { max_iter: 300, learning_rate: 0.07, random_state: 42 }
-    #    - name: knn
-    #      params: { n_neighbors: 21, weights: distance }
-    #    - name: extra_trees
-    #      params: { n_estimators: 500, random_state: 42 }
-    - name: catboost
-      params: { iterations: 337, learning_rate: 0.011597947232020168, depth: 10, l2_leaf_reg: 2.392640911001029, bagging_temperature: 0.9980995133299302, loss_function: Logloss, auto_class_weights: Balanced }
-#    - name: lightgbm
-#      params: { num_leaves: 31, min_child_samples: 20, subsample: 0.9, feature_fraction: 0.9, learning_rate: 0.05, n_estimators: 1000 }
-#    - name: xgboost
-#      params: { n_estimators: 453, max_depth: 9, learning_rate: 0.14515585116869492, subsample: 0.7006075955571237, colsample_bytree: 0.8410144763171868,
-#                reg_alpha: 0.6797709737547473, reg_lambda: 0.9453885209468716, min_child_weight: 7, random_state: 42 }
-    - name: gradient_boosting
-      params: { n_estimators: 84, learning_rate: 0.1326731327153492, max_depth: 3, min_samples_split: 4, min_samples_leaf: 2, subsample: 0.8348468611017669, random_state: 42 }
-#    - name: random_forest
-#      params: { n_estimators: 800, max_depth: 8, min_samples_split: 5, min_samples_leaf: 2, random_state: 42, n_jobs: -1 }
-  method: average
-  weights: null
+  use: false

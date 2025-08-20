@@ -31,13 +31,13 @@ categorical_columns: [Sex,Surname, Embarked, Pclass, Deck, Title,Ticket_number, 
 handle_missing: true
 encode_categorical: true
 scale_features: true
-feature_importance: true
+feature_importance: false
 
 # =========================
 # DIMENSIONALITY REDUCTION (optional)
 # =========================
 dimensionality_reduction:
-  enabled: true          # Set true to enable (applies after scaling)
+  enabled: false          # Set true to enable (applies after scaling)
   method: pca             # pca | svd
   n_components: null         # int; or null with keep_variance for PCA
   keep_variance: 0.95     # e.g., 0.95 to keep 95% variance (PCA only)
@@ -49,7 +49,7 @@ dimensionality_reduction:
 # When provided here, these override experiment.yaml for convenience.
 # =========================
 cv_strategy: stratified       # stratified (default), group, kfold, timeseries
-cv_folds: 5
+cv_folds: 2
 cv_shuffle: true
 cv_random_state: 42
 cv_metric: f1                 # accuracy, f1, or roc_auc
@@ -245,7 +245,7 @@ feature_importance_config:
   plot_importance: true
   save_results: true
   cross_validate: true
-  cv_folds: 5
+  cv_folds: 2
   random_state: 42
 
   # Algorithm-specific parameters

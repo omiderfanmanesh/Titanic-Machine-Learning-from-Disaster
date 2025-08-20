@@ -95,15 +95,6 @@ def diagnose():
             for k in ["handle_missing", "encode_categorical", "scale_features", "feature_importance", "add_original_columns"]:
                 v = data_cfg_dict.get(k, None)
                 click.echo(f"      {k}: {v}")
-            # Dimensionality reduction summary
-            dr = (data_cfg_dict.get("dimensionality_reduction") or {})
-            if dr:
-                click.echo("   🔽 Dimensionality reduction:")
-                click.echo(f"      enabled: {dr.get('enabled', False)}")
-                click.echo(f"      method: {dr.get('method', 'pca')}")
-                click.echo(f"      n_components: {dr.get('n_components')}" )
-                if dr.get('keep_variance') is not None:
-                    click.echo(f"      keep_variance: {dr.get('keep_variance')}")
             fe = data_cfg_dict.get("feature_engineering", {})
             toggles = data_cfg_dict.get("feature_toggles", {})
             click.echo(f"   🔧 Enabled transforms (pre_impute): {fe.get('pre_impute', [])}")
@@ -1394,7 +1385,8 @@ def autopipeline(experiment_config: str, data_config: str, inference_config: str
         click.echo(f"📁 Using run_dir: {run_dir}")
 
         click.echo("🔮 Predicting on test set...")
-        ctx.invoke(predict, run_dir=run_dir, inference_config=inference_config, output_path=None)
+        # predict() expects a tuple of run directories to support ensembling
+        ctx.invoke(predict, run_dir=(run_dir,), inference_config=inference_config, output_path=None)
         pred_path = Path(run_dir) / 'predictions.csv'
         if not pred_path.exists():
             click.echo("❌ Predictions file not found; aborting submission step")
