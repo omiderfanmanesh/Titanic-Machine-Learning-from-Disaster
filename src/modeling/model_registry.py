@@ -262,17 +262,25 @@ try:
     
     class CatBoostModel(BaseModel):
         """CatBoost model wrapper."""
-        
+
         def _create_model(self, **params) -> BaseEstimator:
-            """Create CatBoost model."""
+            """Create CatBoost model with safe RNG parameter handling."""
+            # CatBoost supports random_seed; sklearn uses random_state. Avoid passing both.
+            p = dict(params) if params else {}
+            if "random_state" in p and "random_seed" not in p:
+                p["random_seed"] = p.pop("random_state")
+            elif "random_state" in p and "random_seed" in p:
+                # Prefer explicit random_seed; drop random_state to avoid CatBoostError
+                p.pop("random_state", None)
+
             default_params = {
-                "random_state": 42,
+                "random_seed": 42,
                 "iterations": 100,
                 "learning_rate": 0.1,
                 "depth": 6,
-                "verbose": False
+                "verbose": False,
             }
-            default_params.update(params)
+            default_params.update(p)
             return cb.CatBoostClassifier(**default_params)
     
     CATBOOST_AVAILABLE = True
