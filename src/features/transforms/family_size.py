@@ -11,10 +11,20 @@ from features.transforms.base import BaseTransform
 
 
 class FamilySizeTransform(BaseTransform):
-    """Creates family size and is_alone features."""
+    """Creates FamilySize and a grouped categorical FamilySizeGrouped.
+
+    FamilySize = SibSp + Parch + 1
+    FamilySizeGrouped (string):
+      - Alone (size == 1)
+      - Small (2–4)
+      - Medium (5–6)
+      - Large (>=7)
+
+    This grouping generalizes the example mapping (1:Alone; 2–4:Small; 5–6:Medium; 7,8,11:Large).
+    """
 
     def __init__(self, sibsp_col: str = "SibSp", parch_col: str = "Parch"):
-        super().__init__()
+        super().__init__(name="FamilySizeTransform")
         self.sibsp_col = sibsp_col
         self.parch_col = parch_col
 
@@ -25,6 +35,8 @@ class FamilySizeTransform(BaseTransform):
         if missing_cols:
             raise ValueError(f"Missing required columns: {missing_cols}")
 
+        # Declare new columns (IsAlone disabled by request)
+        self._set_new_cols(["FamilySize", "FamilySizeGrouped"])
         self.is_fitted = True
         return self
 
@@ -34,11 +46,30 @@ class FamilySizeTransform(BaseTransform):
             raise ValueError("Transform must be fitted before calling transform")
 
         X = X.copy()
-        X["FamilySize"] = X[self.sibsp_col] + X[self.parch_col] + 1
-        X["IsAlone"] = (X["FamilySize"] == 1).astype(int)
+        X["FamilySize"] = pd.to_numeric(X[self.sibsp_col], errors="coerce").fillna(0) + \
+                           pd.to_numeric(X[self.parch_col], errors="coerce").fillna(0) + 1
+        X["FamilySize"] = X["FamilySize"].astype(int)
+        # IsAlone disabled (kept out of outputs)
 
-        self.logger.debug(f"Created FamilySize (range: {X['FamilySize'].min()}-{X['FamilySize'].max()}) "
-                          f"and IsAlone ({X['IsAlone'].sum()}/{len(X)} alone)")
+        # Grouping into categories
+        def _group(sz: int) -> str:
+            if sz <= 1:
+                return "Alone"
+            if 2 <= sz <= 4:
+                return "Small"
+            if 5 <= sz <= 6:
+                return "Medium"
+            return "Large"
+
+        X["FamilySizeGrouped"] = X["FamilySize"].apply(_group).astype("string")
+
+        try:
+            counts = X["FamilySizeGrouped"].value_counts().to_dict()
+            self.logger.info(
+                f"FamilySize: range={int(X['FamilySize'].min())}-{int(X['FamilySize'].max())}, "
+                f"grouped_dist={counts}"
+            )
+        except Exception:
+            pass
 
         return X
-

@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
+from core.utils import LoggerFactory
 
 class ScalingOrchestrator:
     def __init__(self, enable: bool = True, config: Optional[Dict[str, Any]] = None):
@@ -19,6 +20,7 @@ class ScalingOrchestrator:
         self.min_unique_threshold: int = self.config.get("min_unique_threshold", 3)  # Exclude if < 3 unique values
         self.restore_dtypes: bool = self.config.get("restore_dtypes", True)
         self.debug: bool = self.config.get("debug", False)
+        self.logger = LoggerFactory.get_logger(self.__class__.__name__)
 
     def fit(self, X: pd.DataFrame) -> "ScalingOrchestrator":
         if not self.enable:
@@ -54,6 +56,9 @@ class ScalingOrchestrator:
         if self.debug:
             print(f"Scaling columns: {self.scale_cols}")
             print(f"Excluded columns: {list(exclude_cols & set(numeric_cols))}")
+        self.logger.info(
+            f"Scaling: numeric={len(numeric_cols)}, scale_cols={len(self.scale_cols)}, excluded={len(set(numeric_cols)-set(self.scale_cols))}"
+        )
 
         # Store original dtypes for restoration
         if self.restore_dtypes:
@@ -82,6 +87,7 @@ class ScalingOrchestrator:
         if available_cols:
             # Apply scaling
             X[available_cols] = self.scaler.transform(X[available_cols])
+            self.logger.info(f"Scaling applied to {len(available_cols)} columns")
 
             # Restore dtypes if requested and safe to do
             if self.restore_dtypes:

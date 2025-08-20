@@ -136,6 +136,9 @@ class TitanicTrainer(ITrainer):
         # Split data - this is the raw data before feature processing
         X_train_raw, X_val_raw = X.iloc[train_idx], X.iloc[val_idx]
         y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+        self.logger.info(
+            f"Fold {self.fold_scores.__len__()+1 if hasattr(self,'fold_scores') else fold_idx+1}: raw shapes train={X_train_raw.shape}, val={X_val_raw.shape}"
+        )
         
         # Clone the feature builder for this fold to prevent leakage
         if feature_builder is not None:
@@ -149,6 +152,9 @@ class TitanicTrainer(ITrainer):
             # Transform both training and validation folds using the fitted pipeline
             X_train = fold_feature_pipeline.transform(X_train_raw)
             X_val = fold_feature_pipeline.transform(X_val_raw)
+            self.logger.info(
+                f"Fold {fold_idx+1}: after feature pipeline train={X_train.shape}, val={X_val.shape}"
+            )
 
             # Drop id/target columns from transformed features to prevent leakage
             id_col = self.config.get("id_column") or "PassengerId"
@@ -208,6 +214,9 @@ class TitanicTrainer(ITrainer):
         except TypeError:
             # Some estimators don't accept sample_weight
             fold_model.fit(X_train, y_train)
+        self.logger.info(
+            f"Fold {fold_idx+1}: model trained; val_predict on {len(X_val)} rows"
+        )
         
         # Make predictions on processed validation set
         val_pred = self._predict_proba(fold_model, X_val)

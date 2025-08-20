@@ -22,25 +22,25 @@ required_columns:
   - Embarked
 
 # What we want the model to treat as numeric/categorical (post-FE)
-numeric_columns: [Age, SibSp, Parch, Fare, Ticket_number, TicketGroupSize, FamilySize]
-categorical_columns: [Sex,Surname, Embarked, Pclass, Deck, Title,Ticket_number, Ticket_prefix, IsAlone, AgeBin]
+numeric_columns: [Age, SibSp, Parch, Fare, Ticket_number, TicketGroupSize, Ticket_Frequency, Is_Married]
+categorical_columns: [Sex,Surname, Embarked, Pclass, Deck, Title,Ticket_number, Ticket_prefix, AgeBin, FamilySizeGrouped, Family]
 
 # =========================
 # GLOBAL SWITCHES
 # =========================
 handle_missing: true
 encode_categorical: true
-scale_features: true
+scale_features: false
 feature_importance: true
 
 # =========================
 # DIMENSIONALITY REDUCTION (optional)
 # =========================
 dimensionality_reduction:
-  enabled: true          # Set true to enable (applies after scaling)
+  enabled: false          # Set true to enable (applies after scaling)
   method: pca             # pca | svd
   n_components: null         # int; or null with keep_variance for PCA
-  keep_variance: 0.95     # e.g., 0.95 to keep 95% variance (PCA only)
+  keep_variance: 0.99     # e.g., 0.95 to keep 95% variance (PCA only)
   whiten: false           # PCA whitening
   random_state: 42
 
@@ -78,7 +78,7 @@ imbalance:
 # Alternative to resampling. If both imbalance.enabled and class_weight.enabled
 # are true, resampling is applied first, then class_weight/sample_weight.
 class_weight:
-  enabled: true
+  enabled: false
   # scheme: balanced|custom
   scheme: balanced
   # Only used when scheme: custom
@@ -97,20 +97,23 @@ exclude_column_for_training:
   - First_Middle
   - MaidenName
   - Surname
+  - Family
   - Ticket_prefix
   - Title_First_Middle
   - Title_Raw
   - IsAlone
   - Age
   - TicketGroupSize
-  - Deck
+#  - Deck
   - Embarked
 #  - Pclass
 #  - Sex
 #  - Title
-#  - Parch
-#  - SibSp
-#  - FamilySize
+  - Parch
+  - SibSp
+  - FamilySize
+  - Fare
+  - IsMarried
 
 
 
@@ -120,7 +123,7 @@ skip_encoding_columns: [PassengerId]
 
 # Params used by transforms
 log_transform_fare: true
-age_bins: 5
+age_bins: 10
 rare_title_threshold: null
 # Optional explicit overrides for title normalization
 title_map_override:
@@ -147,16 +150,27 @@ encoding:
     handle_missing: "value"
     handle_unknown: "ignore"
   per_column:
-#    Surname:
-#      method: onehot       # keep as-is, no encoding
+    # Low-cardinality categoricals → one-hot
     Title:
-      method: onehot            # simple, no extra dependency
+      method: onehot
     Deck:
-      method: onehot           # safe, low-cardinality one-hot
+      method: onehot
     Embarked:
-      method: onehot           # S/C/Q one-hot (clearer than single WOE col)
+      method: onehot
     AgeBin:
-      method: onehot          # treat as ordered categories
+      method: onehot
+    FamilySizeGrouped:
+      method: onehot
+    FareBin:
+      method: onehot
+    Sex:
+      method: onehot
+    Pclass:
+      method: onehot
+    # High-cardinality → ordered target encoding (lower leakage than plain target)
+    Family:
+      method: target
+      a: 1.0
 #    Ticket_number:
 #      method: label           # keep as-is, no encoding
 #    Ticket_prefix:
@@ -214,25 +228,32 @@ imputation:
 feature_engineering:
   pre_impute:
     - TitleTransform           # → Title + name-derived fields
+    - FamilyTransform          # → Family (cleaned surname)
+    - MarriedTransform         # → Is_Married (binary from Title)
     - FamilySizeTransform      # → FamilySize, IsAlone
     - TicketParseTransform     # → Ticket_prefix, Ticket_number (before imputation)
+    - TicketFrequencyTransform # → Ticket_Frequency (count per Ticket)
     - DeckTransform            # → Deck (maps missing to 'U')
     - AgeImputeByTitleTransform # Impute Age using Title + Pclass (before Fare imputation)
   post_impute:
     - TicketGroupTransform     # → TicketGroupSize (numeric)
-    - FareTransform            # fix Fare==0 using class mean  then optional log to Fare_log
+    - FareBinningTransform     # Discretize Fare into 13 bins (FareBin)
     - AgeBinningTransform      # → AgeBin (numeric)
 
 # Enable/disable individual transforms by class name
 feature_toggles:
   TitleTransform: true
+  FamilyTransform: true
+  MarriedTransform: true
   FamilySizeTransform: true
   TicketParseTransform: true
   DeckTransform: true
   TicketGroupTransform: True
-  FareTransform: true
+  TicketFrequencyTransform: true
+  FareTransform: false
+  FareBinningTransform: true
   AgeBinningTransform: true
-  AgeImputeByTitleTransform: false  # Impute Age using Title + Pclass
+  AgeImputeByTitleTransform: true  # Impute Age using Title + Pclass
 
  # =========================
 # FEATURE IMPORTANCE

@@ -51,16 +51,19 @@ class TitanicFeatureBuilder(ITransformer):
     # -------- fit --------
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "TitanicFeatureBuilder":
         self.logger.info("Fitting feature builder")
+        self.logger.info(f"Initial raw shape: {X.shape}; columns: {len(X.columns)}")
 
         # 1) FE (pre-impute)
         self.pipeline_pre = build_pipeline_pre(self.config)
         self.pipeline_pre.fit(X, y)
         Xt = self.pipeline_pre.transform(X)
+        self.logger.info(f"After pre-impute FE: shape={Xt.shape}")
 
         # 2) Impute BEFORE encoding
         if self.imputer is not None:
             self.imputer.fit(Xt, y)
             Xt = self.imputer.transform(Xt)
+            self.logger.info(f"After imputation: shape={Xt.shape}")
             # optional: brief report
             try:
                 rep = self.imputer.get_report()
@@ -73,6 +76,7 @@ class TitanicFeatureBuilder(ITransformer):
         self.pipeline_post = build_pipeline_post(self.config)
         self.pipeline_post.fit(Xt, y)
         Xt = self.pipeline_post.transform(Xt)
+        self.logger.info(f"After post-impute FE: shape={Xt.shape}")
 
         # 3.5) Apply exclusion list BEFORE encoding to avoid generating dummies
         # If train_columns (inclusion) is provided, skip exclusion to avoid conflicts
@@ -89,8 +93,10 @@ class TitanicFeatureBuilder(ITransformer):
 
         # 4) Encoding
         cat_cols = self.config.get("categorical_columns", [])
+        self.logger.info(f"Encoding setup: categorical_columns in config={len(cat_cols)}")
         self.encoder.fit(Xt, y, categorical_cols=cat_cols)
         Xt_enc = self.encoder.transform(Xt)
+        self.logger.info(f"After encoding: shape={Xt_enc.shape}")
 
         # 4.5) Remove original columns that have been transformed/encoded
         final_columns = self._get_final_columns(Xt_enc)
@@ -112,6 +118,7 @@ class TitanicFeatureBuilder(ITransformer):
                 )
             else:
                 self._reduced_columns = None
+                self.logger.info("Dimensionality reduction disabled in config")
         except Exception as e:
             # Fail safe: disable reducer if it errors, to not block training
             self.logger.error(f"Dimensionality reduction failed during fit: {e}. Disabling reducer for this run.")
@@ -144,13 +151,16 @@ class TitanicFeatureBuilder(ITransformer):
         if not self._is_fitted:
             raise ValueError("Feature builder must be fitted before transform")
 
-        self.logger.info(f"Transforming data with {len(X)} samples")
+        self.logger.info(f"Transforming data with {len(X)} samples (raw shape={X.shape})")
 
         # Same order as fit()
         Xt = self.pipeline_pre.transform(X)
+        self.logger.info(f"Transform: after pre-impute FE: shape={Xt.shape}")
         if self.imputer is not None:
             Xt = self.imputer.transform(Xt)
+            self.logger.info(f"Transform: after imputation: shape={Xt.shape}")
         Xt = self.pipeline_post.transform(Xt)
+        self.logger.info(f"Transform: after post-impute FE: shape={Xt.shape}")
         # Apply exclusion BEFORE encoding during inference-time transform as well
         # Skip if inclusion list is provided
         try:
@@ -163,6 +173,7 @@ class TitanicFeatureBuilder(ITransformer):
         except Exception:
             pass
         Xt = self.encoder.transform(Xt)
+        self.logger.info(f"Transform: after encoding: shape={Xt.shape}")
 
         # Align to frozen encoded schema
         if self._fitted_columns is not None:
@@ -175,6 +186,7 @@ class TitanicFeatureBuilder(ITransformer):
             Xt = Xt[self._fitted_columns]
 
         Xt = self.scaler.transform(Xt)
+        self.logger.info(f"Transform: after scaling: shape={Xt.shape}")
 
         # Apply dimensionality reduction if enabled
         if getattr(self.reducer, "enabled", False):

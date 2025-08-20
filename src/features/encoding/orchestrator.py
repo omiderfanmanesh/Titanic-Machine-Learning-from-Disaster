@@ -7,6 +7,8 @@ class EncodingOrchestrator:
     def __init__(self, config: Dict[str, Any]):
         self.config = config or {}
         self._encoders: Dict[str, IEncoderStrategy] = {}
+        from core.utils import LoggerFactory
+        self.logger = LoggerFactory.get_logger(self.__class__.__name__)
 
     def _encoding_cfg(self) -> Dict[str, Any]:
         enc = (self.config.get("encoding") or {})
@@ -23,14 +25,18 @@ class EncodingOrchestrator:
 
         if not categorical_cols:
             categorical_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
+        self.logger.info(f"Encoding: candidate categorical columns={len(categorical_cols)}")
 
         skip = set(self.config.get("skip_encoding_columns", []) or [])
+        built = 0
         for col in categorical_cols:
             if col in skip or col not in X.columns:
                 continue
             cfg = self._col_cfg(col)
             enc = build_encoder(col, cfg).fit(X, y)
             self._encoders[col] = enc
+            built += 1
+        self.logger.info(f"Encoding: built encoders for {built} columns (skipped {len(skip)})")
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:

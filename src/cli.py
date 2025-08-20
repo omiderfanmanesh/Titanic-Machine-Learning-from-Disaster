@@ -388,11 +388,14 @@ def features(experiment_config: str, data_config: str, features_config: Optional
         X_train = train_df.drop(columns=[data_cfg.target_column])
         y_train = train_df[data_cfg.target_column]
 
+        click.echo(f"🔧 Feature building: fitting on X_train={X_train.shape}, y_train={y_train.shape}")
         feature_builder.fit(X_train, y_train)
 
         # Transform both train and test
+        click.echo("🔄 Transforming training and test data...")
         X_train_processed = feature_builder.transform(X_train)
         X_test_processed = feature_builder.transform(test_df)
+        click.echo(f"✅ Transformed: train={X_train_processed.shape}, test={X_test_processed.shape}")
 
         # Save processed data
         processed_dir = path_manager.data_dir / "processed"
@@ -410,6 +413,13 @@ def features(experiment_config: str, data_config: str, features_config: Optional
         click.echo("✅ Features built and saved:")
         click.echo(f"   📁 Train: {train_processed_path} ({X_train_processed.shape})")
         click.echo(f"   📁 Test: {test_processed_path} ({X_test_processed.shape})")
+        try:
+            id_col = data_cfg.id_column
+            target_col = data_cfg.target_column
+            cols = list(X_train_processed.columns)
+            click.echo(f"   🔎 Columns: total={len(cols)}; id_present={id_col in cols}; target_present={target_col in cols}")
+        except Exception:
+            pass
 
     except Exception as e:
         click.echo(f"❌ Feature building failed: {e}")

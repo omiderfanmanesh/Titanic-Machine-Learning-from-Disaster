@@ -2,9 +2,13 @@ from features.pipeline.pipeline import FeaturePipeline
 from features.transforms import (
     FamilySizeTransform,
     TitleTransform,
+    FamilyTransform,
     DeckTransform,
+    MarriedTransform,
     TicketGroupTransform,
+    TicketFrequencyTransform,
     FareTransform,
+    FareBinningTransform,
     AgeBinningTransform, AgeImputeByTitleTransform,
 )
 from features.transforms.ticket_parse import TicketParseTransform
@@ -12,9 +16,13 @@ from features.transforms.ticket_parse import TicketParseTransform
 TRANSFORM_MAP = {
     "FamilySizeTransform": FamilySizeTransform,
     "TitleTransform": TitleTransform,
+    "FamilyTransform": FamilyTransform,
+    "MarriedTransform": MarriedTransform,
     "DeckTransform": DeckTransform,
     "TicketGroupTransform": TicketGroupTransform,
+    "TicketFrequencyTransform": TicketFrequencyTransform,
     "FareTransform": FareTransform,
+    "FareBinningTransform": FareBinningTransform,
     "AgeBinningTransform": AgeBinningTransform,
     "TicketParseTransform": TicketParseTransform,
     "AgeImputeByTitleTransform": AgeImputeByTitleTransform,
