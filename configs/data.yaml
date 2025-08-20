@@ -30,7 +30,7 @@ categorical_columns: [Sex,Surname, Embarked, Pclass, Deck, Title,Ticket_number, 
 # =========================
 handle_missing: true
 encode_categorical: true
-scale_features: false
+scale_features: true
 feature_importance: true
 
 # =========================
@@ -93,11 +93,11 @@ class_weight:
 # Columns to drop from training/prediction if train_columns is not specified
 exclude_column_for_training:
   - Cabin
-  - Ticket_number
+#  - Ticket_number
   - First_Middle
   - MaidenName
   - Surname
-  - Family
+#  - Family
   - Ticket_prefix
   - Title_First_Middle
   - Title_Raw
@@ -156,21 +156,22 @@ encoding:
     Deck:
       method: onehot
     Embarked:
-      method: onehot
+      method: ordinal
     AgeBin:
       method: onehot
     FamilySizeGrouped:
-      method: onehot
+      method: ordinal
     FareBin:
-      method: onehot
+      method: ordinal
     Sex:
       method: onehot
     Pclass:
       method: onehot
     # High-cardinality → ordered target encoding (lower leakage than plain target)
     Family:
-      method: target
-      a: 1.0
+      method: onehot
+#      method: target
+#      a: 1.0
 #    Ticket_number:
 #      method: label           # keep as-is, no encoding
 #    Ticket_prefix:
