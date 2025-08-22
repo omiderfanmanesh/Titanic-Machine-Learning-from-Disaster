@@ -21,7 +21,7 @@ feature_toggles:
   AgeImputeByTitleTransform: true
   FareTransform: true          # enable log(Fare)
   FareBinningTransform: true
-  AgeBinningTransform: true
+  AgeBinningTransform: false
   FarePerPersonTransform: false
 
 # Ensure critical columns are used (override drops from data.yaml)
@@ -52,7 +52,6 @@ categorical_columns:
   - Pclass
   - Deck
   - Title
-  - AgeBin
   - FamilySizeGrouped
   - Ticket_prefix
   - Family
@@ -63,16 +62,16 @@ encoding:
     method: onehot
     handle_missing: "value"
     handle_unknown: "ignore"
+    drop_invariant: true
   per_column:
     Sex: { method: onehot }
     Pclass: { method: onehot }
     Embarked: { method: onehot }
     Title: { method: onehot }
     Deck: { method: onehot }
-    AgeBin: { method: onehot }
     FamilySizeGrouped: { method: onehot }
-    Ticket_prefix: { method: onehot }
-    Family: { method: onehot }
+    Ticket_prefix: { method: catboost, a: 1.0 }
+    Family: { method: catboost, a: 1.0 }
     # Keep Ticket_number out to avoid ID leakage/noise
 
 # Imputation tweaks kept minimal (Age via transform; ensure robust defaults)
@@ -105,7 +104,6 @@ feature_engineering:
     - FarePerPersonTransform
     - FareBinningTransform
     - FamilyRoleTransform
-    - AgeBinningTransform
 
 # Ensemble setup: strong simple blend aimed at 0.79–0.80 LB
 ensemble:
