@@ -11,6 +11,7 @@ feature_toggles:
   FamilyTransform: true
   MarriedTransform: true
   FamilySizeTransform: true
+  FamilyRoleTransform: true
   TicketParseTransform: true
   TicketFrequencyTransform: true
   DeckTransform: true
@@ -19,6 +20,7 @@ feature_toggles:
   FareTransform: true
   FareBinningTransform: true
   AgeBinningTransform: true
+  FarePerPersonTransform: true
 
 exclude_column_for_training:
   - Cabin
@@ -76,6 +78,23 @@ handle_missing: true
 encode_categorical: true
 scale_features: true
 feature_importance: true
+
+feature_engineering:
+  pre_impute:
+    - TitleTransform
+    - FamilyTransform
+    - MarriedTransform
+    - FamilySizeTransform
+    - TicketParseTransform
+    - TicketFrequencyTransform
+    - DeckTransform
+    - AgeImputeByTitleTransform
+  post_impute:
+    - TicketGroupTransform
+    - FarePerPersonTransform
+    - FareBinningTransform
+    - FamilyRoleTransform
+    - AgeBinningTransform
 
 ensemble:
   use: true

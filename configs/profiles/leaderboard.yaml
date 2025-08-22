@@ -13,6 +13,7 @@ feature_toggles:
   FamilyTransform: true
   MarriedTransform: true
   FamilySizeTransform: true
+  FamilyRoleTransform: true
   TicketParseTransform: true
   TicketFrequencyTransform: true
   DeckTransform: true
@@ -21,6 +22,7 @@ feature_toggles:
   FareTransform: true          # enable log(Fare)
   FareBinningTransform: true
   AgeBinningTransform: true
+  FarePerPersonTransform: true
 
 # Ensure critical columns are used (override drops from data.yaml)
 exclude_column_for_training:
@@ -85,6 +87,24 @@ handle_missing: true
 encode_categorical: true
 scale_features: true
 feature_importance: true
+
+# Override stage lists to include new transforms
+feature_engineering:
+  pre_impute:
+    - TitleTransform
+    - FamilyTransform
+    - MarriedTransform
+    - FamilySizeTransform
+    - TicketParseTransform
+    - TicketFrequencyTransform
+    - DeckTransform
+    - AgeImputeByTitleTransform
+  post_impute:
+    - TicketGroupTransform
+    - FarePerPersonTransform
+    - FareBinningTransform
+    - FamilyRoleTransform
+    - AgeBinningTransform
 
 # Ensemble setup: strong simple blend aimed at 0.79–0.80 LB
 ensemble:

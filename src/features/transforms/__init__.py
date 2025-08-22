@@ -14,6 +14,8 @@ from .age_binning import AgeBinningTransform
 from .family_size import FamilySizeTransform
 from .age_impute_by_title import AgeImputeByTitleTransform
 from .married import MarriedTransform
+from .child_mother import FamilyRoleTransform
+from .fare_per_person import FarePerPersonTransform
 
 __all__ = [
     "TitleTransform",
@@ -27,4 +29,6 @@ __all__ = [
     "FamilySizeTransform",
     "AgeImputeByTitleTransform",
     "MarriedTransform",
+    "FamilyRoleTransform",
+    "FarePerPersonTransform",
 ]

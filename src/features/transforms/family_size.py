@@ -35,8 +35,8 @@ class FamilySizeTransform(BaseTransform):
         if missing_cols:
             raise ValueError(f"Missing required columns: {missing_cols}")
 
-        # Declare new columns (IsAlone disabled by request)
-        self._set_new_cols(["FamilySize", "FamilySizeGrouped"])
+        # Declare new columns
+        self._set_new_cols(["FamilySize", "FamilySizeGrouped", "IsAlone"])
         self.is_fitted = True
         return self
 
@@ -49,7 +49,8 @@ class FamilySizeTransform(BaseTransform):
         X["FamilySize"] = pd.to_numeric(X[self.sibsp_col], errors="coerce").fillna(0) + \
                            pd.to_numeric(X[self.parch_col], errors="coerce").fillna(0) + 1
         X["FamilySize"] = X["FamilySize"].astype(int)
-        # IsAlone disabled (kept out of outputs)
+        # IsAlone: 1 if FamilySize == 1
+        X["IsAlone"] = (X["FamilySize"] == 1).astype("int8")
 
         # Grouping into categories
         def _group(sz: int) -> str:
