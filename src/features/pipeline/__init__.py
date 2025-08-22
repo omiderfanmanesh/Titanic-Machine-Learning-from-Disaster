@@ -12,6 +12,8 @@ from features.transforms import (
     AgeBinningTransform, AgeImputeByTitleTransform,
 )
 from features.transforms.ticket_parse import TicketParseTransform
+from features.transforms.child_mother import FamilyRoleTransform
+from features.transforms.fare_per_person import FarePerPersonTransform
 
 TRANSFORM_MAP = {
     "FamilySizeTransform": FamilySizeTransform,
@@ -26,6 +28,8 @@ TRANSFORM_MAP = {
     "AgeBinningTransform": AgeBinningTransform,
     "TicketParseTransform": TicketParseTransform,
     "AgeImputeByTitleTransform": AgeImputeByTitleTransform,
+    "FamilyRoleTransform": FamilyRoleTransform,
+    "FarePerPersonTransform": FarePerPersonTransform,
 }
 
 def _is_enabled(name: str, config: dict) -> bool:
