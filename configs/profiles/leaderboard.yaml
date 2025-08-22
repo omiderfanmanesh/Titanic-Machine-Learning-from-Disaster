@@ -13,7 +13,7 @@ feature_toggles:
   FamilyTransform: true
   MarriedTransform: true
   FamilySizeTransform: true
-  FamilyRoleTransform: true
+  FamilyRoleTransform: false
   TicketParseTransform: true
   TicketFrequencyTransform: true
   DeckTransform: true
@@ -22,7 +22,7 @@ feature_toggles:
   FareTransform: true          # enable log(Fare)
   FareBinningTransform: true
   AgeBinningTransform: true
-  FarePerPersonTransform: true
+  FarePerPersonTransform: false
 
 # Ensure critical columns are used (override drops from data.yaml)
 exclude_column_for_training:
@@ -70,8 +70,8 @@ encoding:
     Deck: { method: onehot }
     AgeBin: { method: onehot }
     FamilySizeGrouped: { method: onehot }
-    Ticket_prefix: { method: catboost, a: 1.0 }
-    Family: { method: catboost, a: 1.0 }
+    Ticket_prefix: { method: onehot }
+    Family: { method: onehot }
     # Keep Ticket_number out to avoid ID leakage/noise
 
 # Imputation tweaks kept minimal (Age via transform; ensure robust defaults)
