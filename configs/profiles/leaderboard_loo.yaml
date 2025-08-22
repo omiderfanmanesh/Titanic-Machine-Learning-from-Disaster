@@ -101,12 +101,11 @@ ensemble:
   model_list:
     - name: catboost
       params:
-        iterations: 1400
-        depth: 5
+        iterations: 1200
+        depth: 4
         learning_rate: 0.05
-        l2_leaf_reg: 4.0
+        l2_leaf_reg: 5.0
         verbose: false
-        auto_class_weights: Balanced
     - name: hgb
       params:
         max_iter: 400
@@ -116,11 +115,11 @@ ensemble:
       params:
         C: 1.2
         random_state: 42
-  method: rank_average
-  weights: [0.6, 0.25, 0.15]
+  method: average
+  weights: [0.45, 0.5, 0.05]
 
 stacking:
   use: true
   meta_model:
     name: logistic
-    params: {}
+    params: { C: 2.0 }
