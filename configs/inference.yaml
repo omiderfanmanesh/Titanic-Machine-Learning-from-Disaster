@@ -9,7 +9,7 @@
 # =============================================================================
 # How to combine predictions from multiple models (e.g., from cross-validation folds)
 ensemble_method: average    # Options: average, rank_average, geometric_mean, median, max, min, single_best
-ensemble_weights: [0.45, 0.5, 0.05]          # Optional weights for weighted averaging
+ensemble_weights: [0.0, 1.0, 0.0]          # Favor best single model (HGB)
 
 # Optional: cross-run ensembling manifest (Stage 4)
 # If provided, predict can be called without --run-dir and will

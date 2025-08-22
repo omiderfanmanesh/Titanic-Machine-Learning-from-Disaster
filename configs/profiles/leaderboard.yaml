@@ -32,6 +32,7 @@ exclude_column_for_training:
   - Surname
   - Title_First_Middle
   - Title_Raw
+  - Ticket_number
   # Keep engineered/useful columns in (Embarked, Fare, Parch, SibSp, FamilySize, Is_Married, TicketGroupSize)
 
 # Columns to guide encoders (post-FE names)
@@ -127,7 +128,7 @@ ensemble:
         penalty: l2
         C: 1.2
   method: average
-  weights: [0.45, 0.5, 0.05]
+  weights: [0.0, 1.0, 0.0]
 
 # Enable stacking meta-learner on OOF
 stacking:
