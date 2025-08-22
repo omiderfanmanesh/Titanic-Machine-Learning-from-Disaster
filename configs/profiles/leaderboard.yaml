@@ -20,7 +20,7 @@ feature_toggles:
   TicketGroupTransform: true
   AgeImputeByTitleTransform: true
   FareTransform: true          # enable log(Fare)
-  FareBinningTransform: true
+  FareBinningTransform: false  # keep numeric Fare (log) only
   AgeBinningTransform: false
   FarePerPersonTransform: false
 
@@ -118,9 +118,12 @@ ensemble:
         verbose: false
     - name: hgb
       params:
-        max_iter: 400
-        learning_rate: 0.06
-        max_depth: 4
+        max_iter: 600
+        learning_rate: 0.05
+        max_depth: 3
+        max_leaf_nodes: 31
+        min_samples_leaf: 20
+        l2_regularization: 0.01
     - name: logistic
       params:
         penalty: l2
