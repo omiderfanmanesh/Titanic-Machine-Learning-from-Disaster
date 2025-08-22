@@ -1,0 +1,14 @@
+cv_folds: 7
+handle_missing: true
+encode_categorical: true
+scale_features: true
+feature_importance: true
+feature_toggles:
+  TitleTransform: true
+  FamilySizeTransform: true
+  TicketParseTransform: true
+  DeckTransform: true
+  TicketGroupTransform: true
+  FareTransform: true
+  AgeBinningTransform: true
+

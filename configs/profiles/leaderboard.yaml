@@ -92,22 +92,27 @@ ensemble:
   model_list:
     - name: catboost
       params:
-        iterations: 1200
-        depth: 4
+        iterations: 1400
+        depth: 5
         learning_rate: 0.05
-        l2_leaf_reg: 5.0
-        random_seed: 42
+        l2_leaf_reg: 4.0
         verbose: false
-        # auto_class_weights: Balanced  # optional; try enabling if minority class underperforms
+        auto_class_weights: Balanced
     - name: hgb
       params:
-        max_iter: 350
+        max_iter: 400
         learning_rate: 0.06
         max_depth: 4
-        random_state: 42
     - name: logistic
       params:
+        penalty: l2
         C: 1.2
-        random_state: 42
   method: rank_average
   weights: [0.6, 0.25, 0.15]
+
+# Enable stacking meta-learner on OOF
+stacking:
+  use: true
+  meta_model:
+    name: logistic
+    params: {}

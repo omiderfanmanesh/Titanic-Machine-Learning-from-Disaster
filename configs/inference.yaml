@@ -8,7 +8,7 @@
 # ENSEMBLE CONFIGURATION
 # =============================================================================
 # How to combine predictions from multiple models (e.g., from cross-validation folds)
-ensemble_method: average    # Options: average, rank_average, geometric_mean, median, max, min, single_best
+ensemble_method: rank_average    # Options: average, rank_average, geometric_mean, median, max, min, single_best
 ensemble_weights: null          # Optional weights for weighted averaging [0.3, 0.4, 0.3] or null for equal weights
 
 # Optional: cross-run ensembling manifest (Stage 4)

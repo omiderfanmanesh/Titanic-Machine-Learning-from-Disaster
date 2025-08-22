@@ -1,0 +1,10 @@
+cv_folds: 3
+feature_toggles:
+  TicketParseTransform: false
+  AgeBinningTransform: true
+  FareTransform: true
+handle_missing: true
+encode_categorical: true
+scale_features: true
+feature_importance: false
+
